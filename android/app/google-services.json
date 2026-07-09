@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "820605465127",
+    "project_id": "flutter-ai-playground-3bc50",
+    "storage_bucket": "flutter-ai-playground-3bc50.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:820605465127:android:ba5c52803e50126a989402",
+        "android_client_info": {
+          "package_name": "com.example.mahmoud_math_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD4Vj-A6Unojlu4ajGX3UMy7NgBejXjH6g"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:820605465127:android:f4c5a6d6a2dc38f3989402",
+        "android_client_info": {
+          "package_name": "com.mahmouddyab.mahmou"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD4Vj-A6Unojlu4ajGX3UMy7NgBejXjH6g"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -1,0 +1,26 @@
+{
+  "classes/CLS-001": {
+    "classId": "CLS-001",
+    "name": "الثالث الثانوي العلمي - شعبة 1",
+    "year": "2027-2028"
+  },
+  "lessons/LESSON-001": {
+    "title": "مراجعة المتطابقات والنشر والاختزال",
+    "unit": "مراجعات",
+    "classId": "CLS-001",
+    "fileUrl": "",
+    "videoUrl": "",
+    "published": true
+  },
+  "tests/TEST-001": {
+    "title": "اختبار الأعداد العقدية 1",
+    "classId": "CLS-001",
+    "maxScore": 100,
+    "published": true
+  },
+  "announcements/ANN-001": {
+    "title": "أهلاً بكم في منصة الرياضيات",
+    "body": "نبدأ بالحلم ونصنع الإنجاز",
+    "classId": "ALL"
+  }
+}
