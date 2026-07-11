@@ -909,45 +909,184 @@ class LessonsTab extends StatelessWidget {
 class ResultsTab extends StatelessWidget {
   final bool isTeacher;
   final String studentEmail;
-  const ResultsTab(
-      {super.key, required this.isTeacher, required this.studentEmail});
+
+  const ResultsTab({
+    super.key,
+    required this.isTeacher,
+    required this.studentEmail,
+  });
 
   @override
   Widget build(BuildContext context) {
     Query<Map<String, dynamic>> query =
         FirebaseFirestore.instance.collection('results');
-    if (!isTeacher)
-      query = query.where('studentEmail', isEqualTo: studentEmail);
+
+    if (!isTeacher) {
+      query = query.where(
+        'studentEmail',
+        isEqualTo: emailKey(studentEmail),
+      );
+    }
 
     return Scaffold(
       body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
         stream: query.snapshots(),
         builder: (context, snap) {
-          if (snap.hasError) return ErrorBox(message: snap.error.toString());
-          if (!snap.hasData) return const LoadingScreen();
-          final docs = snap.data!.docs;
-          if (docs.isEmpty)
+          if (snap.hasError) {
+            return ErrorBox(message: snap.error.toString());
+          }
+
+          if (!snap.hasData) {
+            return const LoadingScreen();
+          }
+
+          final docs = [...snap.data!.docs];
+
+          // ترتيب النتائج من الأحدث إلى الأقدم دون الحاجة إلى Firestore Index.
+          docs.sort((a, b) {
+            final aTime = a.data()['createdAt'];
+            final bTime = b.data()['createdAt'];
+
+            final aMilliseconds =
+                aTime is Timestamp ? aTime.millisecondsSinceEpoch : 0;
+            final bMilliseconds =
+                bTime is Timestamp ? bTime.millisecondsSinceEpoch : 0;
+
+            return bMilliseconds.compareTo(aMilliseconds);
+          });
+
+          if (docs.isEmpty) {
             return const EmptyBox(message: 'لا توجد نتائج بعد.');
+          }
+
           return ListView.separated(
             padding: const EdgeInsets.all(16),
             itemCount: docs.length,
-            separatorBuilder: (_, __) => const SizedBox(height: 8),
-            itemBuilder: (context, i) {
-              final data = docs[i].data();
-              final score = data['score'] ?? '';
-              final maxScore = data['maxScore'] ?? '';
+            separatorBuilder: (_, __) => const SizedBox(height: 10),
+            itemBuilder: (context, index) {
+              final resultDoc = docs[index];
+              final data = resultDoc.data();
+
+              final testTitle =
+                  (data['testTitle'] ?? 'اختبار').toString();
+              final score = (data['score'] ?? '').toString();
+              final maxScore = (data['maxScore'] ?? '').toString();
+              final studentName =
+                  (data['studentName'] ?? data['studentEmail'] ?? '')
+                      .toString();
+              final note = (data['note'] ?? '').toString().trim();
+
               return Card(
-                child: ListTile(
-                  leading:
-                      const Icon(Icons.assessment_outlined, color: brandPurple),
-                  title: Text((data['testTitle'] ?? 'اختبار').toString()),
-                  subtitle: Text(
-                      '${data['studentEmail'] ?? ''}\nالملاحظة: ${data['note'] ?? ''}'),
-                  isThreeLine: true,
-                  trailing: Directionality(
-                    textDirection: TextDirection.ltr,
-                    child: Text('$score / $maxScore',
-                        style: const TextStyle(fontWeight: FontWeight.bold)),
+                elevation: 1,
+                clipBehavior: Clip.antiAlias,
+                child: Padding(
+                  padding: const EdgeInsets.all(14),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const CircleAvatar(
+                        backgroundColor: Color(0x183E276A),
+                        child: Icon(
+                          Icons.assessment_outlined,
+                          color: brandPurple,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              testTitle,
+                              style: const TextStyle(
+                                fontSize: 17,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            const SizedBox(height: 5),
+                            if (studentName.isNotEmpty)
+                              Text(
+                                studentName,
+                                style: const TextStyle(
+                                  color: Colors.black54,
+                                ),
+                              ),
+                            const SizedBox(height: 10),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 7,
+                              ),
+                              decoration: BoxDecoration(
+                                color: const Color(0x143E276A),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Directionality(
+                                textDirection: TextDirection.ltr,
+                                child: Text(
+                                  '$score / $maxScore',
+                                  style: const TextStyle(
+                                    color: brandPurple,
+                                    fontSize: 17,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            if (note.isNotEmpty) ...[
+                              const SizedBox(height: 9),
+                              Text('ملاحظة: $note'),
+                            ],
+                          ],
+                        ),
+                      ),
+                      if (isTeacher)
+                        PopupMenuButton<String>(
+                          tooltip: 'خيارات النتيجة',
+                          onSelected: (value) async {
+                            if (value == 'edit') {
+                              await showResultDialog(
+                                context,
+                                resultDoc: resultDoc,
+                              );
+                            } else if (value == 'delete') {
+                              await deleteResult(
+                                context,
+                                resultDoc.reference,
+                                testTitle,
+                              );
+                            }
+                          },
+                          itemBuilder: (context) => const [
+                            PopupMenuItem(
+                              value: 'edit',
+                              child: Row(
+                                children: [
+                                  Icon(Icons.edit_outlined),
+                                  SizedBox(width: 10),
+                                  Text('تعديل'),
+                                ],
+                              ),
+                            ),
+                            PopupMenuItem(
+                              value: 'delete',
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    Icons.delete_outline,
+                                    color: Colors.red,
+                                  ),
+                                  SizedBox(width: 10),
+                                  Text(
+                                    'حذف',
+                                    style: TextStyle(color: Colors.red),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                    ],
                   ),
                 ),
               );
@@ -966,99 +1105,384 @@ class ResultsTab extends StatelessWidget {
   }
 }
 
-Future<void> showResultDialog(BuildContext context) async {
-  final studentsSnap = await FirebaseFirestore.instance
-      .collection('students')
-      .orderBy('fullName')
-      .get();
-  if (!context.mounted) return;
-  if (studentsSnap.docs.isEmpty) {
-    ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('أضف طالبة أولاً قبل تسجيل نتيجة.')));
-    return;
-  }
+Future<void> showResultDialog(
+  BuildContext context, {
+  DocumentSnapshot<Map<String, dynamic>>? resultDoc,
+}) async {
+  final isEditing = resultDoc != null;
+  final oldData = resultDoc?.data() ?? <String, dynamic>{};
 
-  String selectedEmail =
-      (studentsSnap.docs.first.data()['email'] ?? studentsSnap.docs.first.id)
-          .toString();
-  final testTitle = TextEditingController(text: 'اختبار');
-  final score = TextEditingController();
-  final maxScore = TextEditingController(text: '100');
-  final note = TextEditingController();
+  try {
+    final studentsSnap = await FirebaseFirestore.instance
+        .collection('students')
+        .orderBy('fullName')
+        .get();
 
-  await showDialog<void>(
-    context: context,
-    builder: (context) => StatefulBuilder(
-      builder: (context, setDialogState) => AlertDialog(
-        title: const Text('إضافة نتيجة'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              DropdownButtonFormField<String>(
-                value: selectedEmail,
-                decoration: const InputDecoration(labelText: 'اختيار الطالبة'),
-                items: studentsSnap.docs.map((doc) {
-                  final data = doc.data();
-                  final email = (data['email'] ?? doc.id).toString();
-                  final name = (data['fullName'] ?? email).toString();
-                  final cls = displayClassName(data['classId']?.toString());
-                  return DropdownMenuItem(
-                      value: email, child: Text('$name - $cls'));
-                }).toList(),
-                onChanged: (value) {
-                  if (value != null)
-                    setDialogState(() => selectedEmail = value);
-                },
-              ),
-              TextField(
-                  controller: testTitle,
-                  decoration: const InputDecoration(labelText: 'اسم الاختبار')),
-              TextField(
-                  controller: score,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(labelText: 'الدرجة')),
-              TextField(
-                  controller: maxScore,
-                  keyboardType: TextInputType.number,
-                  decoration:
-                      const InputDecoration(labelText: 'الدرجة العظمى')),
-              TextField(
-                  controller: note,
-                  decoration: const InputDecoration(labelText: 'ملاحظة')),
-            ],
-          ),
+    if (!context.mounted) return;
+
+    if (studentsSnap.docs.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('أضف طالبة أولاً قبل تسجيل نتيجة.'),
         ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('إلغاء')),
-          FilledButton(
-            onPressed: () async {
-              if (testTitle.text.trim().isEmpty || score.text.trim().isEmpty)
-                return;
-              await FirebaseFirestore.instance.collection('results').add({
-                'studentEmail': emailKey(selectedEmail),
-                'testTitle': testTitle.text.trim(),
-                'score': num.tryParse(score.text.trim()) ?? score.text.trim(),
-                'maxScore':
-                    num.tryParse(maxScore.text.trim()) ?? maxScore.text.trim(),
-                'note': note.text.trim(),
-                'createdAt': FieldValue.serverTimestamp(),
-              });
-              if (context.mounted) Navigator.pop(context);
-            },
-            child: const Text('حفظ'),
-          ),
-        ],
+      );
+      return;
+    }
+
+    // استخدام البريد مفتاحاً يمنع ظهور عناصر Dropdown مكررة.
+    final studentNames = <String, String>{};
+    final studentLabels = <String, String>{};
+
+    for (final doc in studentsSnap.docs) {
+      final data = doc.data();
+      final email =
+          emailKey((data['email'] ?? doc.id).toString());
+
+      if (email.isEmpty) continue;
+
+      final name = (data['fullName'] ?? email).toString();
+      final className =
+          displayClassName(data['classId']?.toString());
+
+      studentNames[email] = name;
+      studentLabels[email] = '$name - $className';
+    }
+
+    if (studentLabels.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('لا توجد طالبة ببريد إلكتروني صالح.'),
+        ),
+      );
+      return;
+    }
+
+    final oldEmail =
+        emailKey((oldData['studentEmail'] ?? '').toString());
+
+    String selectedEmail = studentLabels.containsKey(oldEmail)
+        ? oldEmail
+        : studentLabels.keys.first;
+
+    final testTitle = TextEditingController(
+      text: (oldData['testTitle'] ??
+              (isEditing ? '' : 'اختبار'))
+          .toString(),
+    );
+    final score = TextEditingController(
+      text: (oldData['score'] ?? '').toString(),
+    );
+    final maxScore = TextEditingController(
+      text: (oldData['maxScore'] ??
+              (isEditing ? '' : '100'))
+          .toString(),
+    );
+    final note = TextEditingController(
+      text: (oldData['note'] ?? '').toString(),
+    );
+
+    bool saving = false;
+    String? dialogError;
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: !saving,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) {
+          Future<void> saveResult() async {
+            final titleValue = testTitle.text.trim();
+            final scoreValue = num.tryParse(score.text.trim());
+            final maxScoreValue =
+                num.tryParse(maxScore.text.trim());
+
+            if (titleValue.isEmpty) {
+              setDialogState(
+                () => dialogError = 'أدخل اسم الاختبار.',
+              );
+              return;
+            }
+
+            if (scoreValue == null || maxScoreValue == null) {
+              setDialogState(
+                () => dialogError =
+                    'أدخل الدرجة والدرجة العظمى كأرقام صحيحة.',
+              );
+              return;
+            }
+
+            if (scoreValue < 0 || maxScoreValue <= 0) {
+              setDialogState(
+                () => dialogError =
+                    'يجب أن تكون الدرجة غير سالبة والدرجة العظمى أكبر من صفر.',
+              );
+              return;
+            }
+
+            if (scoreValue > maxScoreValue) {
+              setDialogState(
+                () => dialogError =
+                    'لا يمكن أن تكون الدرجة أكبر من الدرجة العظمى.',
+              );
+              return;
+            }
+
+            setDialogState(() {
+              saving = true;
+              dialogError = null;
+            });
+
+            final data = <String, dynamic>{
+              'studentEmail': emailKey(selectedEmail),
+              'studentName':
+                  studentNames[selectedEmail] ?? selectedEmail,
+              'testTitle': titleValue,
+              'score': scoreValue,
+              'maxScore': maxScoreValue,
+              'note': note.text.trim(),
+              'updatedAt': FieldValue.serverTimestamp(),
+            };
+
+            try {
+              if (isEditing) {
+                await resultDoc.reference.update(data);
+              } else {
+                data['createdAt'] = FieldValue.serverTimestamp();
+                await FirebaseFirestore.instance
+                    .collection('results')
+                    .add(data);
+              }
+
+              if (dialogContext.mounted) {
+                Navigator.of(dialogContext).pop();
+              }
+
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      isEditing
+                          ? 'تم تعديل النتيجة بنجاح.'
+                          : 'تمت إضافة النتيجة بنجاح.',
+                    ),
+                  ),
+                );
+              }
+            } catch (error) {
+              if (dialogContext.mounted) {
+                setDialogState(() {
+                  saving = false;
+                  dialogError = 'تعذر حفظ النتيجة: $error';
+                });
+              }
+            }
+          }
+
+          return AlertDialog(
+            title: Text(
+              isEditing ? 'تعديل النتيجة' : 'إضافة نتيجة',
+            ),
+            content: SingleChildScrollView(
+              child: SizedBox(
+                width: 430,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    DropdownButtonFormField<String>(
+                      value: selectedEmail,
+                      isExpanded: true,
+                      decoration: const InputDecoration(
+                        labelText: 'اختيار الطالبة',
+                        border: OutlineInputBorder(),
+                        prefixIcon: Icon(Icons.person_outline),
+                      ),
+                      items: studentLabels.entries
+                          .map(
+                            (entry) => DropdownMenuItem<String>(
+                              value: entry.key,
+                              child: Text(
+                                entry.value,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: saving
+                          ? null
+                          : (value) {
+                              if (value != null) {
+                                setDialogState(
+                                  () => selectedEmail = value,
+                                );
+                              }
+                            },
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: testTitle,
+                      enabled: !saving,
+                      decoration: const InputDecoration(
+                        labelText: 'اسم الاختبار',
+                        border: OutlineInputBorder(),
+                        prefixIcon: Icon(Icons.quiz_outlined),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: score,
+                      enabled: !saving,
+                      keyboardType:
+                          const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
+                      decoration: const InputDecoration(
+                        labelText: 'الدرجة',
+                        border: OutlineInputBorder(),
+                        prefixIcon: Icon(Icons.grade_outlined),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: maxScore,
+                      enabled: !saving,
+                      keyboardType:
+                          const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
+                      decoration: const InputDecoration(
+                        labelText: 'الدرجة العظمى',
+                        border: OutlineInputBorder(),
+                        prefixIcon: Icon(Icons.stars_outlined),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: note,
+                      enabled: !saving,
+                      minLines: 2,
+                      maxLines: 4,
+                      decoration: const InputDecoration(
+                        labelText: 'ملاحظة',
+                        border: OutlineInputBorder(),
+                        prefixIcon: Icon(Icons.notes_outlined),
+                      ),
+                    ),
+                    if (dialogError != null) ...[
+                      const SizedBox(height: 12),
+                      Text(
+                        dialogError!,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(color: Colors.red),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: saving
+                    ? null
+                    : () => Navigator.of(dialogContext).pop(),
+                child: const Text('إلغاء'),
+              ),
+              FilledButton.icon(
+                onPressed: saving ? null : saveResult,
+                icon: saving
+                    ? const SizedBox(
+                        width: 17,
+                        height: 17,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                        ),
+                      )
+                    : Icon(
+                        isEditing
+                            ? Icons.save_outlined
+                            : Icons.add_chart,
+                      ),
+                label: Text(
+                  saving
+                      ? 'جارٍ الحفظ...'
+                      : isEditing
+                          ? 'حفظ التعديل'
+                          : 'إضافة',
+                ),
+              ),
+            ],
+          );
+        },
       ),
+    );
+
+    testTitle.dispose();
+    score.dispose();
+    maxScore.dispose();
+    note.dispose();
+  } catch (error) {
+    if (!context.mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('تعذر فتح نافذة النتيجة: $error'),
+      ),
+    );
+  }
+}
+
+Future<void> deleteResult(
+  BuildContext context,
+  DocumentReference<Map<String, dynamic>> reference,
+  String testTitle,
+) async {
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: const Text('حذف النتيجة'),
+      content: Text(
+        'هل أنت متأكد من حذف نتيجة «$testTitle»؟\n'
+        'لا يمكن التراجع عن الحذف.',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () =>
+              Navigator.of(dialogContext).pop(false),
+          child: const Text('إلغاء'),
+        ),
+        FilledButton.icon(
+          style: FilledButton.styleFrom(
+            backgroundColor: Colors.red,
+            foregroundColor: Colors.white,
+          ),
+          onPressed: () =>
+              Navigator.of(dialogContext).pop(true),
+          icon: const Icon(Icons.delete_outline),
+          label: const Text('حذف'),
+        ),
+      ],
     ),
   );
 
-  testTitle.dispose();
-  score.dispose();
-  maxScore.dispose();
-  note.dispose();
+  if (confirmed != true) return;
+
+  try {
+    await reference.delete();
+
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('تم حذف النتيجة بنجاح.'),
+        ),
+      );
+    }
+  } catch (error) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('تعذر حذف النتيجة: $error'),
+        ),
+      );
+    }
+  }
 }
 
 class AttendanceTab extends StatelessWidget {
