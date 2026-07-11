@@ -1244,7 +1244,7 @@ Future<void> showResultDialog(
 
             try {
               if (isEditing) {
-                await resultDoc.reference.update(data);
+              await resultDoc!.reference.update(data);
               } else {
                 data['createdAt'] = FieldValue.serverTimestamp();
                 await FirebaseFirestore.instance
