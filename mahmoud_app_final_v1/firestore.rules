@@ -1,0 +1,95 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null && request.auth.token.email != null;
+    }
+
+    function email() {
+      return request.auth.token.email;
+    }
+
+    function userDoc() {
+      return get(/databases/$(database)/documents/users/$(email()));
+    }
+
+    function isActiveUser() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/users/$(email()))
+        && userDoc().data.active == true;
+    }
+
+    function isTeacher() {
+      return isActiveUser()
+        && (userDoc().data.role == 'Teacher' || userDoc().data.role == 'Admin');
+    }
+
+    function userClass() {
+      return userDoc().data.classId;
+    }
+
+    match /users/{userEmail} {
+      allow read: if isTeacher() || (signedIn() && userEmail == email());
+      allow create: if signedIn()
+        && userEmail == email()
+        && request.resource.data.role == 'Pending'
+        && request.resource.data.active == false;
+      allow update, delete: if isTeacher();
+    }
+
+    match /students/{studentId} {
+      allow read: if isTeacher()
+        || (isActiveUser() && resource.data.email == email());
+      allow create, update, delete: if isTeacher();
+    }
+
+    match /classes/{classId} {
+      allow read: if isActiveUser();
+      allow create, update, delete: if isTeacher();
+    }
+
+    match /lessons/{lessonId} {
+      allow read: if isTeacher()
+        || (isActiveUser()
+          && (resource.data.classId == userClass()
+            || resource.data.classId == 'ALL'));
+      allow create, update, delete: if isTeacher();
+    }
+
+    match /tests/{testId} {
+      allow read: if isTeacher()
+        || (isActiveUser()
+          && (resource.data.classId == userClass()
+            || resource.data.classId == 'ALL'));
+      allow create, update, delete: if isTeacher();
+    }
+
+    match /results/{resultId} {
+      allow read: if isTeacher()
+        || (isActiveUser() && resource.data.studentEmail == email());
+      allow create, update, delete: if isTeacher();
+    }
+
+    match /attendance/{attendanceId} {
+      allow read: if isTeacher()
+        || (isActiveUser() && resource.data.studentEmail == email());
+      allow create, update, delete: if isTeacher();
+    }
+
+    match /assignments/{assignmentId} {
+      allow read: if isTeacher()
+        || (isActiveUser()
+          && (resource.data.classId == userClass()
+            || resource.data.classId == 'ALL'));
+      allow create, update, delete: if isTeacher();
+    }
+
+    match /announcements/{announcementId} {
+      allow read: if isTeacher()
+        || (isActiveUser()
+          && (resource.data.classId == userClass()
+            || resource.data.classId == 'ALL'));
+      allow create, update, delete: if isTeacher();
+    }
+  }
+}
