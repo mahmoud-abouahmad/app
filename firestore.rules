@@ -38,7 +38,8 @@ service cloud.firestore {
     }
 
     match /students/{studentId} {
-      allow read: if isTeacher() || (isActiveUser() && resource.data.email == email());
+      allow read: if isTeacher()
+        || (isActiveUser() && resource.data.email == email());
       allow create, update, delete: if isTeacher();
     }
 
@@ -49,35 +50,45 @@ service cloud.firestore {
 
     match /lessons/{lessonId} {
       allow read: if isTeacher()
-        || (isActiveUser() && (resource.data.classId == userClass() || resource.data.classId == 'ALL'));
+        || (isActiveUser()
+          && (resource.data.classId == userClass()
+            || resource.data.classId == 'ALL'));
       allow create, update, delete: if isTeacher();
     }
 
     match /tests/{testId} {
       allow read: if isTeacher()
-        || (isActiveUser() && (resource.data.classId == userClass() || resource.data.classId == 'ALL'));
+        || (isActiveUser()
+          && (resource.data.classId == userClass()
+            || resource.data.classId == 'ALL'));
       allow create, update, delete: if isTeacher();
     }
 
     match /results/{resultId} {
-      allow read: if isTeacher() || (isActiveUser() && resource.data.studentEmail == email());
+      allow read: if isTeacher()
+        || (isActiveUser() && resource.data.studentEmail == email());
       allow create, update, delete: if isTeacher();
     }
 
     match /attendance/{attendanceId} {
-      allow read: if isTeacher() || (isActiveUser() && resource.data.studentEmail == email());
+      allow read: if isTeacher()
+        || (isActiveUser() && resource.data.studentEmail == email());
       allow create, update, delete: if isTeacher();
     }
 
     match /assignments/{assignmentId} {
       allow read: if isTeacher()
-        || (isActiveUser() && (resource.data.classId == userClass() || resource.data.classId == 'ALL'));
+        || (isActiveUser()
+          && (resource.data.classId == userClass()
+            || resource.data.classId == 'ALL'));
       allow create, update, delete: if isTeacher();
     }
 
     match /announcements/{announcementId} {
       allow read: if isTeacher()
-        || (isActiveUser() && (resource.data.classId == userClass() || resource.data.classId == 'ALL'));
+        || (isActiveUser()
+          && (resource.data.classId == userClass()
+            || resource.data.classId == 'ALL'));
       allow create, update, delete: if isTeacher();
     }
   }

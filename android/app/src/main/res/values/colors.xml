@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="brand_purple">#3E276A</color>
+    <color name="brand_purple_dark">#271745</color>
+    <color name="launch_background_color">#F7F5FA</color>
+</resources>
