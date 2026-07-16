@@ -386,8 +386,8 @@ class MathTeacherApp extends StatelessWidget {
           backgroundColor: Colors.white,
           surfaceTintColor: Colors.transparent,
           indicatorColor: const Color(0x243E276A),
-          shape: const RoundedRectangleBorder(
-            borderRadius: BorderRadiusDirectional.only(
+             indicatorShape: const RoundedRectangleBorder(
+              borderRadius: BorderRadiusDirectional.only(
               topEnd: Radius.circular(28),
               bottomEnd: Radius.circular(28),
             ),
