@@ -14,7 +14,7 @@ jobs:
   build:
     name: Build Android Release
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
 
     steps:
       - name: Checkout project
@@ -41,6 +41,11 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
+      - name: Regenerate Android launcher icon
+        run: |
+          rm -rf android/app/src/main/res/mipmap-*
+          dart run flutter_launcher_icons
+
       - name: Analyze source
         continue-on-error: true
         run: flutter analyze
@@ -50,29 +55,22 @@ jobs:
         run: flutter test
 
       - name: Build universal release APK
-        run: flutter build apk --release
-
-      - name: Save universal APK
         run: |
           mkdir -p release-apks
+          flutter build apk --release
           cp build/app/outputs/flutter-apk/app-release.apk release-apks/mahmoud-dyab-app-release.apk
 
       - name: Build smaller release APKs
-        run: flutter build apk --release --split-per-abi
-
-      - name: Save smaller APKs
         run: |
+          flutter build apk --release --split-per-abi
           cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk release-apks/mahmoud-dyab-arm64-release.apk
           cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk release-apks/mahmoud-dyab-arm32-release.apk
           cp build/app/outputs/flutter-apk/app-x86_64-release.apk release-apks/mahmoud-dyab-x86_64-release.apk
 
-      - name: Show generated APK files
-        run: ls -lh release-apks
-
       - name: Upload release APKs
         uses: actions/upload-artifact@v4
         with:
-          name: mahmoud-dyab-final-release-apks
+          name: mahmoud-dyab-v1-2-release-apks
           path: release-apks/*.apk
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 30

@@ -15,7 +15,7 @@ const brandGold = Color(0xFFC9A227);
 const appBackground = Color(0xFFF7F5FA);
 const appName = 'منصة الأستاذ محمود الدياب';
 const slogan = 'نبدأ بالحلم ونصنع الإنجاز';
-const logoAsset = 'assets/images/logo.png';
+const logoAsset = 'assets/images/brand_mark.png';
 const teacherWhatsAppNumber = '0956268336';
 const teacherWhatsAppInternational = '963956268336';
 const appVersionLabel = '1.0.0';
@@ -386,14 +386,21 @@ class MathTeacherApp extends StatelessWidget {
           backgroundColor: Colors.white,
           surfaceTintColor: Colors.transparent,
           indicatorColor: const Color(0x243E276A),
-             indicatorShape: const RoundedRectangleBorder(
-              borderRadius: BorderRadiusDirectional.only(
+          indicatorShape: const RoundedRectangleBorder(
+            borderRadius: BorderRadiusDirectional.only(
               topEnd: Radius.circular(28),
               bottomEnd: Radius.circular(28),
             ),
           ),
-          labelTextStyle: WidgetStatePropertyAll(
-            GoogleFonts.cairo(fontWeight: FontWeight.w700),
+          labelTextStyle: WidgetStateProperty.resolveWith<TextStyle>(
+            (states) => GoogleFonts.cairo(
+              color: states.contains(WidgetState.selected)
+                  ? brandPurple
+                  : const Color(0xFF352D3B),
+              fontWeight: states.contains(WidgetState.selected)
+                  ? FontWeight.w800
+                  : FontWeight.w700,
+            ),
           ),
         ),
         popupMenuTheme: PopupMenuThemeData(
@@ -997,42 +1004,53 @@ class _TeacherShellState extends State<TeacherShell> {
               setState(() => index = value);
               Navigator.of(context).pop();
             },
-            children: const [
+            children: [
               Padding(
-                padding: EdgeInsets.fromLTRB(18, 24, 18, 12),
-                child: BrandHeader(compact: true),
+                padding: const EdgeInsets.fromLTRB(12, 14, 18, 8),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: const BrandHeader(compact: true),
+                    ),
+                    IconButton(
+                      tooltip: 'إغلاق القائمة',
+                      onPressed: () => Navigator.of(context).pop(),
+                      icon: const Icon(Icons.close_rounded),
+                    ),
+                  ],
+                ),
               ),
-              NavigationDrawerDestination(
+              const NavigationDrawerDestination(
                 icon: Icon(Icons.dashboard_outlined),
                 selectedIcon: Icon(Icons.dashboard_rounded),
                 label: Text('الرئيسية'),
               ),
-              NavigationDrawerDestination(
+              const NavigationDrawerDestination(
                 icon: Icon(Icons.groups_outlined),
                 selectedIcon: Icon(Icons.groups_rounded),
                 label: Text('الطالبات'),
               ),
-              NavigationDrawerDestination(
+              const NavigationDrawerDestination(
                 icon: Icon(Icons.menu_book_outlined),
                 selectedIcon: Icon(Icons.menu_book_rounded),
                 label: Text('الدروس'),
               ),
-              NavigationDrawerDestination(
+              const NavigationDrawerDestination(
                 icon: Icon(Icons.assessment_outlined),
                 selectedIcon: Icon(Icons.assessment_rounded),
                 label: Text('النتائج'),
               ),
-              NavigationDrawerDestination(
+              const NavigationDrawerDestination(
                 icon: Icon(Icons.event_available_outlined),
                 selectedIcon: Icon(Icons.event_available_rounded),
                 label: Text('الحضور'),
               ),
-              NavigationDrawerDestination(
+              const NavigationDrawerDestination(
                 icon: Icon(Icons.notifications_outlined),
                 selectedIcon: Icon(Icons.notifications_rounded),
                 label: Text('التنبيهات'),
               ),
-              NavigationDrawerDestination(
+              const NavigationDrawerDestination(
                 icon: Icon(Icons.settings_outlined),
                 selectedIcon: Icon(Icons.settings_rounded),
                 label: Text('الإعدادات'),
@@ -1155,7 +1173,6 @@ class TeacherDashboardPage extends StatelessWidget {
         const WelcomeBanner(
           title: 'مرحبًا أستاذ محمود',
           subtitle: 'متابعة منظمة للدروس والطالبات والإنجاز.',
-          icon: Icons.functions,
         ),
         const SizedBox(height: 16),
         Text(
@@ -1442,15 +1459,25 @@ class StudentsPage extends StatelessWidget {
                       ),
                       PopupMenuButton<String>(
                         tooltip: 'خيارات الطالبة',
-                        onSelected: (value) {
+                        onSelected: (value) async {
                           if (value == 'edit') {
-                            showStudentDialog(context, studentDoc: doc);
+                            await showStudentDialog(context, studentDoc: doc);
+                          } else if (value == 'delete') {
+                            await deleteStudent(context, doc);
                           }
                         },
                         itemBuilder: (_) => const [
                           PopupMenuItem(
                             value: 'edit',
                             child: MenuRow(icon: Icons.edit_outlined, text: 'تعديل'),
+                          ),
+                          PopupMenuItem(
+                            value: 'delete',
+                            child: MenuRow(
+                              icon: Icons.delete_outline,
+                              text: 'حذف الطالبة',
+                              destructive: true,
+                            ),
                           ),
                         ],
                       ),
@@ -1468,6 +1495,83 @@ class StudentsPage extends StatelessWidget {
         label: const Text('إضافة طالبة'),
       ),
     );
+  }
+}
+
+Future<void> deleteStudent(
+  BuildContext context,
+  DocumentSnapshot<Map<String, dynamic>> studentDoc,
+) async {
+  final data = studentDoc.data() ?? <String, dynamic>{};
+  final studentName = (data['fullName'] ?? 'الطالبة').toString();
+  final studentEmail = emailKey(data['email']?.toString());
+
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: const Text('حذف الطالبة'),
+      content: Text(
+        'هل أنت متأكد من حذف «$studentName»؟\n'
+        'سيتم حذف بياناتها ونتائجها وسجلات حضورها من التطبيق، ولا يمكن التراجع عن ذلك.',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(dialogContext).pop(false),
+          child: const Text('إلغاء'),
+        ),
+        FilledButton.icon(
+          style: FilledButton.styleFrom(
+            backgroundColor: Colors.red,
+            foregroundColor: Colors.white,
+          ),
+          onPressed: () => Navigator.of(dialogContext).pop(true),
+          icon: const Icon(Icons.delete_outline),
+          label: const Text('حذف نهائي'),
+        ),
+      ],
+    ),
+  );
+
+  if (confirmed != true) return;
+
+  try {
+    final db = FirebaseFirestore.instance;
+    final references = <DocumentReference<Map<String, dynamic>>>[
+      studentDoc.reference,
+      if (studentEmail.isNotEmpty) db.collection('users').doc(studentEmail),
+    ];
+
+    if (studentEmail.isNotEmpty) {
+      for (final collectionName in ['results', 'attendance']) {
+        final relatedSnapshot = await db
+            .collection(collectionName)
+            .where('studentEmail', isEqualTo: studentEmail)
+            .get();
+        references.addAll(relatedSnapshot.docs.map((doc) => doc.reference));
+      }
+    }
+
+    const maximumDeletesPerBatch = 450;
+    for (var start = 0; start < references.length; start += maximumDeletesPerBatch) {
+      final end = (start + maximumDeletesPerBatch < references.length)
+          ? start + maximumDeletesPerBatch
+          : references.length;
+      final batch = db.batch();
+      for (final reference in references.sublist(start, end)) {
+        batch.delete(reference);
+      }
+      await batch.commit();
+    }
+
+    if (context.mounted) {
+      showSuccess(context, 'تم حذف الطالبة وبياناتها من التطبيق.');
+    }
+  } catch (exception) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('تعذر حذف الطالبة: $exception')),
+      );
+    }
   }
 }
 
@@ -2215,7 +2319,7 @@ Future<void> showResultDialog(
                 'updatedAt': FieldValue.serverTimestamp(),
               };
               if (isEditing) {
-                await resultDoc.reference.update(data);
+                await resultDoc!.reference.update(data);
               } else {
                 data['createdAt'] = FieldValue.serverTimestamp();
                 await FirebaseFirestore.instance.collection('results').add(data);
@@ -3304,24 +3408,38 @@ class BrandLogo extends StatelessWidget {
     return Container(
       width: size,
       height: size,
-      padding: EdgeInsets.all(size * 0.08),
       decoration: BoxDecoration(
-        color: Colors.white,
         shape: BoxShape.circle,
-        border: Border.all(color: const Color(0x33C9A227), width: 1.5),
+        gradient: const LinearGradient(
+          colors: [brandPurpleDark, brandPurple],
+          begin: Alignment.topRight,
+          end: Alignment.bottomLeft,
+        ),
+        border: Border.all(
+          color: const Color(0xFFD9B94E),
+          width: size < 44 ? 1.2 : 2,
+        ),
         boxShadow: const [
           BoxShadow(
-            color: Color(0x18000000),
+            color: Color(0x253E276A),
             blurRadius: 12,
             offset: Offset(0, 4),
           ),
         ],
       ),
-      child: Image.asset(
-        logoAsset,
-        fit: BoxFit.contain,
-        filterQuality: FilterQuality.high,
-        errorBuilder: (_, __, ___) => Icon(Icons.functions, color: brandGold, size: size * 0.7),
+      clipBehavior: Clip.antiAlias,
+      child: Padding(
+        padding: EdgeInsets.all(size * 0.035),
+        child: Image.asset(
+          logoAsset,
+          fit: BoxFit.contain,
+          filterQuality: FilterQuality.high,
+          errorBuilder: (_, __, ___) => Icon(
+            Icons.school_rounded,
+            color: brandGold,
+            size: size * 0.58,
+          ),
+        ),
       ),
     );
   }
@@ -3382,12 +3500,12 @@ class BrandHeader extends StatelessWidget {
 class WelcomeBanner extends StatelessWidget {
   final String title;
   final String subtitle;
-  final IconData icon;
+  final IconData? icon;
   const WelcomeBanner({
     super.key,
     required this.title,
     required this.subtitle,
-    required this.icon,
+    this.icon,
   });
 
   @override
@@ -3422,7 +3540,10 @@ class WelcomeBanner extends StatelessWidget {
               ],
             ),
           ),
-          Icon(icon, color: brandGold, size: 34),
+          if (icon != null) ...[
+            const SizedBox(width: 10),
+            Icon(icon, color: brandGold, size: 32),
+          ],
         ],
       ),
     );
