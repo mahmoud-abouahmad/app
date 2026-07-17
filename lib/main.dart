@@ -874,6 +874,11 @@ class TeacherShell extends StatefulWidget {
 class _TeacherShellState extends State<TeacherShell> {
   int index = 0;
 
+  void openSection(int value) {
+    if (!mounted || value == index) return;
+    setState(() => index = value);
+  }
+
   static const titles = [
     'لوحة الأستاذ',
     'الطالبات',
@@ -925,7 +930,7 @@ class _TeacherShellState extends State<TeacherShell> {
   @override
   Widget build(BuildContext context) {
     final pages = [
-      const TeacherDashboardPage(),
+      TeacherDashboardPage(onNavigate: openSection),
       const StudentsPage(),
       const LessonsPage(isTeacher: true, classId: 'ALL'),
       const ResultsPage(isTeacher: true, studentEmail: ''),
@@ -951,14 +956,15 @@ class _TeacherShellState extends State<TeacherShell> {
           ),
           actions: [
             Padding(
-              padding: const EdgeInsetsDirectional.only(end: 12),
-              child: Tooltip(
-                message: (widget.profile['fullName'] ?? 'الأستاذ محمود').toString(),
-                child: CircleAvatar(
+              padding: const EdgeInsetsDirectional.only(end: 8),
+              child: IconButton(
+                tooltip: 'فتح الملف والإعدادات',
+                onPressed: () => openSection(6),
+                icon: const CircleAvatar(
                   radius: 18,
-                  backgroundColor: const Color(0x183E276A),
+                  backgroundColor: Color(0x183E276A),
                   foregroundColor: brandPurple,
-                  child: const Icon(Icons.person_rounded, size: 21),
+                  child: Icon(Icons.person_rounded, size: 21),
                 ),
               ),
             ),
@@ -977,7 +983,7 @@ class _TeacherShellState extends State<TeacherShell> {
                   labelType: extendedRail
                       ? NavigationRailLabelType.none
                       : NavigationRailLabelType.all,
-                  onDestinationSelected: (value) => setState(() => index = value),
+                  onDestinationSelected: openSection,
                   leading: Padding(
                     padding: const EdgeInsets.only(top: 14, bottom: 18),
                     child: extendedRail
@@ -1001,7 +1007,7 @@ class _TeacherShellState extends State<TeacherShell> {
           drawer: NavigationDrawer(
             selectedIndex: index,
             onDestinationSelected: (value) {
-              setState(() => index = value);
+              openSection(value);
               Navigator.of(context).pop();
             },
             children: [
@@ -1163,7 +1169,12 @@ class _StudentShellState extends State<StudentShell> {
 }
 
 class TeacherDashboardPage extends StatelessWidget {
-  const TeacherDashboardPage({super.key});
+  final ValueChanged<int> onNavigate;
+
+  const TeacherDashboardPage({
+    super.key,
+    required this.onNavigate,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1189,37 +1200,52 @@ class TeacherDashboardPage extends StatelessWidget {
           mainAxisSpacing: 10,
           crossAxisSpacing: 10,
           childAspectRatio: 1.45,
-          children: const [
+          children: [
             LiveCountCard(
               collection: 'students',
               label: 'الطالبات',
               icon: Icons.groups_outlined,
+              onTap: () => onNavigate(1),
             ),
             LiveCountCard(
               collection: 'lessons',
               label: 'الدروس',
               icon: Icons.menu_book_outlined,
+              onTap: () => onNavigate(2),
             ),
             LiveCountCard(
               collection: 'results',
               label: 'النتائج',
               icon: Icons.assessment_outlined,
+              onTap: () => onNavigate(3),
             ),
             LiveCountCard(
               collection: 'attendance',
               label: 'سجلات الحضور',
               icon: Icons.event_available_outlined,
+              onTap: () => onNavigate(4),
             ),
           ],
         ),
         const SizedBox(height: 18),
-        Text(
-          'أحدث التنبيهات',
-          style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                fontWeight: FontWeight.w800,
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                'أحدث التنبيهات',
+                style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
               ),
+            ),
+            TextButton.icon(
+              onPressed: () => onNavigate(5),
+              icon: const Icon(Icons.arrow_back_rounded, size: 18),
+              label: const Text('عرض الكل'),
+            ),
+          ],
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 8),
         StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
           stream: FirebaseFirestore.instance.collection('announcements').snapshots(),
           builder: (context, snapshot) {
@@ -1228,7 +1254,10 @@ class TeacherDashboardPage extends StatelessWidget {
               ..sort((a, b) => timestampMillis(b.data()['createdAt'])
                   .compareTo(timestampMillis(a.data()['createdAt'])));
             if (docs.isEmpty) {
-              return const CompactEmptyCard(message: 'لا توجد تنبيهات بعد.');
+              return CompactEmptyCard(
+                message: 'لا توجد تنبيهات بعد. اضغط لفتح قسم التنبيهات.',
+                onTap: () => onNavigate(5),
+              );
             }
             return Column(
               children: docs.take(3).map((doc) {
@@ -1236,7 +1265,11 @@ class TeacherDashboardPage extends StatelessWidget {
                 final type = (data['type'] ?? 'Important').toString();
                 return Padding(
                   padding: const EdgeInsets.only(bottom: 8),
-                  child: NotificationCompactCard(data: data, type: type),
+                  child: NotificationCompactCard(
+                    data: data,
+                    type: type,
+                    onTap: () => onNavigate(5),
+                  ),
                 );
               }).toList(),
             );
@@ -3554,11 +3587,14 @@ class LiveCountCard extends StatelessWidget {
   final String collection;
   final String label;
   final IconData icon;
+  final VoidCallback onTap;
+
   const LiveCountCard({
     super.key,
     required this.collection,
     required this.label,
     required this.icon,
+    required this.onTap,
   });
 
   @override
@@ -3567,20 +3603,38 @@ class LiveCountCard extends StatelessWidget {
       stream: FirebaseFirestore.instance.collection(collection).snapshots(),
       builder: (context, snapshot) {
         return Card(
-          child: Padding(
-            padding: const EdgeInsets.all(14),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(icon, color: brandPurple),
-                const Spacer(),
-                Text(
-                  snapshot.hasData ? '${snapshot.data!.docs.length}' : '…',
-                  style: const TextStyle(fontSize: 25, fontWeight: FontWeight.w900, color: brandPurpleDark),
-                ),
-                Text(label, style: const TextStyle(color: Colors.black54)),
-              ],
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: onTap,
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Row(
+                    children: [
+                      Icon(icon, color: brandPurple),
+                      const Spacer(),
+                      const Icon(
+                        Icons.arrow_back_ios_new_rounded,
+                        size: 15,
+                        color: Color(0xFF9A91A1),
+                      ),
+                    ],
+                  ),
+                  const Spacer(),
+                  Text(
+                    snapshot.hasData ? '${snapshot.data!.docs.length}' : '…',
+                    style: const TextStyle(
+                      fontSize: 25,
+                      fontWeight: FontWeight.w900,
+                      color: brandPurpleDark,
+                    ),
+                  ),
+                  Text(label, style: const TextStyle(color: Colors.black54)),
+                ],
+              ),
             ),
           ),
         );
@@ -3704,10 +3758,13 @@ class TypeChip extends StatelessWidget {
 class NotificationCompactCard extends StatelessWidget {
   final Map<String, dynamic> data;
   final String type;
+  final VoidCallback? onTap;
+
   const NotificationCompactCard({
     super.key,
     required this.data,
     required this.type,
+    this.onTap,
   });
 
   @override
@@ -3716,6 +3773,7 @@ class NotificationCompactCard extends StatelessWidget {
     final body = (data['body'] ?? data['message'] ?? data['content'] ?? '').toString();
     return Card(
       child: ListTile(
+        onTap: onTap,
         leading: FeatureIcon(icon: notificationTypeIcon(type), color: color),
         title: Text(
           (data['title'] ?? notificationTypeLabel(type)).toString(),
@@ -3866,19 +3924,35 @@ class EmptyBox extends StatelessWidget {
 
 class CompactEmptyCard extends StatelessWidget {
   final String message;
-  const CompactEmptyCard({super.key, required this.message});
+  final VoidCallback? onTap;
+
+  const CompactEmptyCard({
+    super.key,
+    required this.message,
+    this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
     return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(18),
-        child: Row(
-          children: [
-            const Icon(Icons.inbox_outlined, color: brandPurple),
-            const SizedBox(width: 10),
-            Expanded(child: Text(message)),
-          ],
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(18),
+          child: Row(
+            children: [
+              const Icon(Icons.inbox_outlined, color: brandPurple),
+              const SizedBox(width: 10),
+              Expanded(child: Text(message)),
+              if (onTap != null)
+                const Icon(
+                  Icons.arrow_back_ios_new_rounded,
+                  size: 16,
+                  color: Color(0xFF9A91A1),
+                ),
+            ],
+          ),
         ),
       ),
     );
