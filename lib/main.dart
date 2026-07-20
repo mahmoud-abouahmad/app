@@ -18,7 +18,7 @@ const slogan = 'نبدأ بالحلم ونصنع الإنجاز';
 const logoAsset = 'assets/images/brand_mark.png';
 const teacherWhatsAppNumber = '0956268336';
 const teacherWhatsAppInternational = '963956268336';
-const appVersionLabel = '1.2.0';
+const appVersionLabel = '1.2.1';
 
 String emailKey(String? email) => (email ?? '').trim().toLowerCase();
 
@@ -2143,24 +2143,14 @@ class LessonsPage extends StatelessWidget {
                                   lessonDoc: doc,
                                 );
                               } else if (value == 'delete') {
-                                final confirmed =
-                                    await confirmAction(
+                                await deleteDocument(
                                   context,
+                                  reference: doc.reference,
                                   title: 'حذف الدرس',
                                   message:
                                       'سيتم حذف الدرس نهائيًا. هل تريد المتابعة؟',
-                                  confirmText: 'حذف',
-                                  destructive: true,
+                                  successMessage: 'تم حذف الدرس.',
                                 );
-                                if (confirmed) {
-                                  await doc.reference.delete();
-                                  if (context.mounted) {
-                                    showSuccess(
-                                      context,
-                                      'تم حذف الدرس.',
-                                    );
-                                  }
-                                }
                               }
                             },
                             itemBuilder: (_) => const [
