@@ -1,6 +1,8 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_storage/firebase_storage.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -18,7 +20,7 @@ const slogan = 'نبدأ بالحلم ونصنع الإنجاز';
 const logoAsset = 'assets/images/brand_mark.png';
 const teacherWhatsAppNumber = '0956268336';
 const teacherWhatsAppInternational = '963956268336';
-const appVersionLabel = '1.0.0';
+const appVersionLabel = '1.2.0';
 
 String emailKey(String? email) => (email ?? '').trim().toLowerCase();
 
@@ -117,6 +119,78 @@ String displayNumber(dynamic value) {
 }
 
 String todayIso() => DateTime.now().toIso8601String().split('T').first;
+
+const int maximumLessonFileBytes = 20 * 1024 * 1024;
+
+String lessonFileContentType(PlatformFile file) {
+  switch ((file.extension ?? '').toLowerCase()) {
+    case 'pdf':
+      return 'application/pdf';
+    case 'jpg':
+    case 'jpeg':
+      return 'image/jpeg';
+    case 'png':
+      return 'image/png';
+    case 'webp':
+      return 'image/webp';
+    case 'doc':
+      return 'application/msword';
+    case 'docx':
+      return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+    case 'ppt':
+      return 'application/vnd.ms-powerpoint';
+    case 'pptx':
+      return 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+    default:
+      return 'application/octet-stream';
+  }
+}
+
+String lessonStorageFileName(PlatformFile file) {
+  final extension = (file.extension ?? 'bin').toLowerCase();
+  return '${DateTime.now().microsecondsSinceEpoch}.$extension';
+}
+
+String displayFileSize(int bytes) {
+  if (bytes < 1024) return '$bytes بايت';
+  final kilobytes = bytes / 1024;
+  if (kilobytes < 1024) return '${kilobytes.toStringAsFixed(1)} كيلوبايت';
+  final megabytes = kilobytes / 1024;
+  return '${megabytes.toStringAsFixed(1)} ميغابايت';
+}
+
+String friendlyStorageError(Object exception) {
+  if (exception is FirebaseException) {
+    switch (exception.code) {
+      case 'unauthorized':
+        return 'لا توجد صلاحية لرفع الملف. تأكد من نشر قواعد Firebase Storage.';
+      case 'bucket-not-found':
+      case 'no-default-bucket':
+        return 'لم يتم تفعيل Firebase Storage لهذا المشروع بعد.';
+      case 'canceled':
+        return 'تم إلغاء رفع الملف.';
+      case 'quota-exceeded':
+        return 'تم تجاوز سعة التخزين المتاحة في Firebase.';
+      case 'retry-limit-exceeded':
+        return 'انقطع الاتصال أثناء الرفع. أعد المحاولة.';
+      default:
+        return exception.message ?? exception.code;
+    }
+  }
+  return exception.toString();
+}
+
+Future<void> deleteLessonStorageFile(String? storagePath) async {
+  final path = (storagePath ?? '').trim();
+  if (path.isEmpty) return;
+
+  try {
+    await FirebaseStorage.instance.ref(path).delete();
+  } on FirebaseException catch (exception) {
+    if (exception.code != 'object-not-found') rethrow;
+  }
+}
+
 
 Future<void> openTeacherWhatsApp(BuildContext context) async {
   final uri = Uri.https(
@@ -1792,6 +1866,7 @@ Future<void> showStudentDialog(
 class LessonsPage extends StatelessWidget {
   final bool isTeacher;
   final String classId;
+
   const LessonsPage({
     super.key,
     required this.isTeacher,
@@ -1800,7 +1875,9 @@ class LessonsPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    Query<Map<String, dynamic>> query = FirebaseFirestore.instance.collection('lessons');
+    Query<Map<String, dynamic>> query =
+        FirebaseFirestore.instance.collection('lessons');
+
     if (!isTeacher) {
       query = query.where('classId', whereIn: [classId, 'ALL']);
     }
@@ -1810,12 +1887,21 @@ class LessonsPage extends StatelessWidget {
       body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
         stream: query.snapshots(),
         builder: (context, snapshot) {
-          if (snapshot.hasError) return ErrorBox(message: snapshot.error.toString());
+          if (snapshot.hasError) {
+            return ErrorBox(message: snapshot.error.toString());
+          }
           if (!snapshot.hasData) return const LoadingBox();
+
           final docs = [...snapshot.data!.docs]
-            ..removeWhere((doc) => !isTeacher && doc.data()['published'] == false)
-            ..sort((a, b) => timestampMillis(b.data()['createdAt'])
-                .compareTo(timestampMillis(a.data()['createdAt'])));
+            ..removeWhere(
+              (doc) => !isTeacher && doc.data()['published'] == false,
+            )
+            ..sort(
+              (a, b) => timestampMillis(b.data()['createdAt']).compareTo(
+                timestampMillis(a.data()['createdAt']),
+              ),
+            );
+
           if (docs.isEmpty) {
             return const EmptyBox(
               icon: Icons.menu_book_outlined,
@@ -1830,109 +1916,166 @@ class LessonsPage extends StatelessWidget {
             itemBuilder: (context, index) {
               final doc = docs[index];
               final data = doc.data();
-              final description = (data['description'] ?? '').toString().trim();
+              final description =
+                  (data['description'] ?? '').toString().trim();
+              final attachedFileUrl =
+                  (data['fileUrl'] ?? '').toString().trim();
+              final attachedFileName =
+                  (data['fileName'] ?? '').toString().trim();
+              final videoUrl = (data['videoUrl'] ?? '').toString().trim();
+
               return Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const FeatureIcon(icon: Icons.menu_book_outlined),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              (data['title'] ?? 'درس').toString(),
-                              style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
-                            ),
-                            const SizedBox(height: 5),
-                            Text(
-                              'الوحدة: ${(data['unit'] ?? 'غير محددة')}',
-                              style: const TextStyle(color: Colors.black54),
-                            ),
-                            if (description.isNotEmpty) ...[
-                              const SizedBox(height: 8),
-                              Text(description),
-                            ],
-                            const SizedBox(height: 10),
-                            Wrap(
-                              spacing: 6,
-                              runSpacing: 6,
-                              children: [
-                                SmallChip(
-                                  text: displayClassName(data['classId']?.toString()),
-                                  icon: Icons.groups_outlined,
+                clipBehavior: Clip.antiAlias,
+                child: InkWell(
+                  onTap: () {
+                    if (attachedFileUrl.isNotEmpty && videoUrl.isEmpty) {
+                      openExternalLink(context, attachedFileUrl);
+                    } else if (videoUrl.isNotEmpty &&
+                        attachedFileUrl.isEmpty) {
+                      openExternalLink(context, videoUrl);
+                    } else if (attachedFileUrl.isEmpty && videoUrl.isEmpty) {
+                      showErrorSnack(
+                        context,
+                        'لم تتم إضافة ملف أو فيديو لهذا الدرس بعد.',
+                      );
+                    }
+                  },
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const FeatureIcon(icon: Icons.menu_book_outlined),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                (data['title'] ?? 'درس').toString(),
+                                style: const TextStyle(
+                                  fontSize: 17,
+                                  fontWeight: FontWeight.w800,
                                 ),
-                                if (data['fileUrl']?.toString().trim().isNotEmpty == true)
-                                  const SmallChip(text: 'ملف مرفق', icon: Icons.attach_file),
-                                if (data['videoUrl']?.toString().trim().isNotEmpty == true)
-                                  const SmallChip(text: 'فيديو', icon: Icons.play_circle_outline),
+                              ),
+                              const SizedBox(height: 5),
+                              Text(
+                                'الوحدة: ${(data['unit'] ?? 'غير محددة')}',
+                                style:
+                                    const TextStyle(color: Colors.black54),
+                              ),
+                              if (description.isNotEmpty) ...[
+                                const SizedBox(height: 8),
+                                Text(description),
                               ],
-                            ),
-                            if (data['fileUrl']?.toString().trim().isNotEmpty == true ||
-                                data['videoUrl']?.toString().trim().isNotEmpty == true) ...[
                               const SizedBox(height: 10),
                               Wrap(
-                                spacing: 8,
-                                runSpacing: 8,
+                                spacing: 6,
+                                runSpacing: 6,
                                 children: [
-                                  if (data['fileUrl']?.toString().trim().isNotEmpty == true)
-                                    OutlinedButton.icon(
-                                      onPressed: () => openExternalLink(
-                                        context,
-                                        data['fileUrl'].toString(),
-                                      ),
-                                      icon: const Icon(Icons.attach_file_rounded, size: 18),
-                                      label: const Text('فتح الملف'),
+                                  SmallChip(
+                                    text: displayClassName(
+                                      data['classId']?.toString(),
                                     ),
-                                  if (data['videoUrl']?.toString().trim().isNotEmpty == true)
-                                    OutlinedButton.icon(
-                                      onPressed: () => openExternalLink(
-                                        context,
-                                        data['videoUrl'].toString(),
-                                      ),
-                                      icon: const Icon(Icons.play_circle_outline_rounded, size: 18),
-                                      label: const Text('مشاهدة الفيديو'),
+                                    icon: Icons.groups_outlined,
+                                  ),
+                                  if (attachedFileUrl.isNotEmpty)
+                                    SmallChip(
+                                      text: attachedFileName.isEmpty
+                                          ? 'ملف مرفق'
+                                          : attachedFileName,
+                                      icon: Icons.attach_file,
+                                    ),
+                                  if (videoUrl.isNotEmpty)
+                                    const SmallChip(
+                                      text: 'فيديو',
+                                      icon: Icons.play_circle_outline,
+                                    ),
+                                  if (isTeacher)
+                                    SmallChip(
+                                      text: data['published'] == false
+                                          ? 'غير منشور'
+                                          : 'منشور',
+                                      icon: data['published'] == false
+                                          ? Icons.visibility_off_outlined
+                                          : Icons.visibility_outlined,
                                     ),
                                 ],
                               ),
+                              if (attachedFileUrl.isNotEmpty ||
+                                  videoUrl.isNotEmpty) ...[
+                                const SizedBox(height: 10),
+                                Wrap(
+                                  spacing: 8,
+                                  runSpacing: 8,
+                                  children: [
+                                    if (attachedFileUrl.isNotEmpty)
+                                      OutlinedButton.icon(
+                                        onPressed: () => openExternalLink(
+                                          context,
+                                          attachedFileUrl,
+                                        ),
+                                        icon: const Icon(
+                                          Icons.attach_file_rounded,
+                                          size: 18,
+                                        ),
+                                        label: Text(
+                                          attachedFileName.isEmpty
+                                              ? 'فتح الملف'
+                                              : 'فتح $attachedFileName',
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                    if (videoUrl.isNotEmpty)
+                                      OutlinedButton.icon(
+                                        onPressed: () => openExternalLink(
+                                          context,
+                                          videoUrl,
+                                        ),
+                                        icon: const Icon(
+                                          Icons.play_circle_outline_rounded,
+                                          size: 18,
+                                        ),
+                                        label: const Text('مشاهدة الفيديو'),
+                                      ),
+                                  ],
+                                ),
+                              ],
                             ],
-                          ],
+                          ),
                         ),
-                      ),
-                      if (isTeacher)
-                        PopupMenuButton<String>(
-                          onSelected: (value) {
-                            if (value == 'edit') {
-                              showLessonDialog(context, lessonDoc: doc);
-                            } else if (value == 'delete') {
-                              deleteDocument(
-                                context,
-                                reference: doc.reference,
-                                title: 'حذف الدرس',
-                                message: 'هل تريد حذف درس «${data['title'] ?? 'درس'}»؟',
-                                successMessage: 'تم حذف الدرس.',
-                              );
-                            }
-                          },
-                          itemBuilder: (_) => const [
-                            PopupMenuItem(
-                              value: 'edit',
-                              child: MenuRow(icon: Icons.edit_outlined, text: 'تعديل'),
-                            ),
-                            PopupMenuItem(
-                              value: 'delete',
-                              child: MenuRow(
-                                icon: Icons.delete_outline,
-                                text: 'حذف',
-                                destructive: true,
+                        if (isTeacher)
+                          PopupMenuButton<String>(
+                            onSelected: (value) async {
+                              if (value == 'edit') {
+                                await showLessonDialog(
+                                  context,
+                                  lessonDoc: doc,
+                                );
+                              } else if (value == 'delete') {
+                                await deleteLesson(context, doc);
+                              }
+                            },
+                            itemBuilder: (_) => const [
+                              PopupMenuItem(
+                                value: 'edit',
+                                child: MenuRow(
+                                  icon: Icons.edit_outlined,
+                                  text: 'تعديل',
+                                ),
                               ),
-                            ),
-                          ],
-                        ),
-                    ],
+                              PopupMenuItem(
+                                value: 'delete',
+                                child: MenuRow(
+                                  icon: Icons.delete_outline,
+                                  text: 'حذف',
+                                  destructive: true,
+                                ),
+                              ),
+                            ],
+                          ),
+                      ],
+                    ),
                   ),
                 ),
               );
@@ -1951,20 +2094,93 @@ class LessonsPage extends StatelessWidget {
   }
 }
 
+Future<void> deleteLesson(
+  BuildContext context,
+  DocumentSnapshot<Map<String, dynamic>> lessonDoc,
+) async {
+  final data = lessonDoc.data() ?? <String, dynamic>{};
+  final title = (data['title'] ?? 'درس').toString();
+
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: const Text('حذف الدرس'),
+      content: Text(
+        'هل تريد حذف درس «$title»؟\n'
+        'سيُحذف الملف المرفوع معه من Firebase Storage أيضًا.',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(dialogContext).pop(false),
+          child: const Text('إلغاء'),
+        ),
+        FilledButton.icon(
+          style: FilledButton.styleFrom(
+            backgroundColor: const Color(0xFFC62828),
+          ),
+          onPressed: () => Navigator.of(dialogContext).pop(true),
+          icon: const Icon(Icons.delete_outline),
+          label: const Text('حذف'),
+        ),
+      ],
+    ),
+  );
+
+  if (confirmed != true) return;
+
+  try {
+    await deleteLessonStorageFile(data['storagePath']?.toString());
+    await lessonDoc.reference.delete();
+
+    if (context.mounted) {
+      showSuccess(context, 'تم حذف الدرس والملف المرفق.');
+    }
+  } catch (exception) {
+    if (context.mounted) {
+      showErrorSnack(
+        context,
+        'تعذر حذف الدرس: ${friendlyStorageError(exception)}',
+      );
+    }
+  }
+}
+
 Future<void> showLessonDialog(
   BuildContext context, {
   DocumentSnapshot<Map<String, dynamic>>? lessonDoc,
 }) async {
   final isEditing = lessonDoc != null;
   final oldData = lessonDoc?.data() ?? <String, dynamic>{};
-  final title = TextEditingController(text: (oldData['title'] ?? '').toString());
-  final unit = TextEditingController(text: (oldData['unit'] ?? '').toString());
-  final description = TextEditingController(text: (oldData['description'] ?? '').toString());
-  final fileUrl = TextEditingController(text: (oldData['fileUrl'] ?? '').toString());
-  final videoUrl = TextEditingController(text: (oldData['videoUrl'] ?? '').toString());
-  var selectedClassId = (oldData['classId'] ?? 'CLS-001').toString();
+  final lessonReference = lessonDoc?.reference ??
+      FirebaseFirestore.instance.collection('lessons').doc();
+
+  final title =
+      TextEditingController(text: (oldData['title'] ?? '').toString());
+  final unit =
+      TextEditingController(text: (oldData['unit'] ?? '').toString());
+  final description =
+      TextEditingController(text: (oldData['description'] ?? '').toString());
+  final originalFileUrl = (oldData['fileUrl'] ?? '').toString();
+  final fileUrl = TextEditingController(text: originalFileUrl);
+  final videoUrl =
+      TextEditingController(text: (oldData['videoUrl'] ?? '').toString());
+
+  final originalStoragePath =
+      (oldData['storagePath'] ?? '').toString().trim();
+  final originalFileName =
+      (oldData['fileName'] ?? '').toString().trim();
+  final originalFileSize =
+      (oldData['fileSize'] is num) ? (oldData['fileSize'] as num).toInt() : 0;
+  final originalContentType =
+      (oldData['fileContentType'] ?? '').toString().trim();
+
+  var selectedClassId =
+      (oldData['classId'] ?? 'CLS-001').toString();
   var published = oldData['published'] != false;
   var saving = false;
+  var uploadProgress = 0.0;
+  var removeExistingFile = false;
+  PlatformFile? selectedFile;
   String? dialogError;
 
   await showDialog<void>(
@@ -1972,51 +2188,248 @@ Future<void> showLessonDialog(
     barrierDismissible: false,
     builder: (dialogContext) => StatefulBuilder(
       builder: (dialogContext, setDialogState) {
+        Future<void> chooseFile() async {
+          setDialogState(() => dialogError = null);
+
+          try {
+            final result = await FilePicker.platform.pickFiles(
+              allowMultiple: false,
+              type: FileType.custom,
+              allowedExtensions: const [
+                'pdf',
+                'jpg',
+                'jpeg',
+                'png',
+                'webp',
+                'doc',
+                'docx',
+                'ppt',
+                'pptx',
+              ],
+              withData: true,
+            );
+
+            if (result == null || result.files.isEmpty) return;
+
+            final picked = result.files.single;
+            if (picked.bytes == null) {
+              setDialogState(
+                () => dialogError =
+                    'تعذر قراءة الملف. اختر الملف من ذاكرة الهاتف ثم أعد المحاولة.',
+              );
+              return;
+            }
+            if (picked.size <= 0) {
+              setDialogState(
+                () => dialogError = 'الملف المختار فارغ.',
+              );
+              return;
+            }
+            if (picked.size > maximumLessonFileBytes) {
+              setDialogState(
+                () => dialogError =
+                    'حجم الملف أكبر من 20 ميغابايت. اختر ملفًا أصغر.',
+              );
+              return;
+            }
+
+            setDialogState(() {
+              selectedFile = picked;
+              removeExistingFile = false;
+              uploadProgress = 0;
+              fileUrl.clear();
+            });
+          } catch (exception) {
+            setDialogState(
+              () => dialogError =
+                  'تعذر اختيار الملف: ${friendlyStorageError(exception)}',
+            );
+          }
+        }
+
+        void cancelSelectedFile() {
+          setDialogState(() {
+            selectedFile = null;
+            uploadProgress = 0;
+            if (!removeExistingFile) {
+              fileUrl.text = originalFileUrl;
+            }
+          });
+        }
+
+        void removeCurrentFile() {
+          setDialogState(() {
+            selectedFile = null;
+            removeExistingFile = true;
+            uploadProgress = 0;
+            fileUrl.clear();
+          });
+        }
+
         Future<void> save() async {
           if (title.text.trim().isEmpty) {
-            setDialogState(() => dialogError = 'أدخل عنوان الدرس.');
+            setDialogState(
+              () => dialogError = 'أدخل عنوان الدرس.',
+            );
             return;
           }
+
+          final manualFileUrl = fileUrl.text.trim();
+          if (manualFileUrl.isNotEmpty &&
+              !manualFileUrl.startsWith('http://') &&
+              !manualFileUrl.startsWith('https://')) {
+            setDialogState(
+              () => dialogError =
+                  'رابط الملف الخارجي يجب أن يبدأ بـ https:// أو http://',
+            );
+            return;
+          }
+
           setDialogState(() {
             saving = true;
+            uploadProgress = 0;
             dialogError = null;
           });
+
+          Reference? newlyUploadedReference;
+          var finalFileUrl = manualFileUrl;
+          var finalStoragePath = originalStoragePath;
+          var finalFileName = originalFileName;
+          var finalFileSize = originalFileSize;
+          var finalContentType = originalContentType;
+          var shouldDeleteOldStorageFile = false;
+
           try {
+            if (selectedFile != null) {
+              final picked = selectedFile!;
+              final bytes = picked.bytes!;
+              final storagePath =
+                  'lesson_files/${lessonReference.id}/${lessonStorageFileName(picked)}';
+              final storageReference =
+                  FirebaseStorage.instance.ref(storagePath);
+              newlyUploadedReference = storageReference;
+
+              final uploadTask = storageReference.putData(
+                bytes,
+                SettableMetadata(
+                  contentType: lessonFileContentType(picked),
+                  cacheControl: 'public,max-age=3600',
+                  customMetadata: <String, String>{
+                    'originalName': picked.name,
+                    'lessonId': lessonReference.id,
+                    'uploadedBy':
+                        FirebaseAuth.instance.currentUser?.email ?? '',
+                  },
+                ),
+              );
+
+              final progressSubscription =
+                  uploadTask.snapshotEvents.listen((snapshot) {
+                final total = snapshot.totalBytes;
+                if (total <= 0 || !dialogContext.mounted) return;
+                setDialogState(
+                  () => uploadProgress =
+                      snapshot.bytesTransferred / total,
+                );
+              });
+
+              final uploadSnapshot = await uploadTask;
+              await progressSubscription.cancel();
+
+              finalFileUrl =
+                  await uploadSnapshot.ref.getDownloadURL();
+              finalStoragePath = uploadSnapshot.ref.fullPath;
+              finalFileName = picked.name;
+              finalFileSize = picked.size;
+              finalContentType = lessonFileContentType(picked);
+              shouldDeleteOldStorageFile =
+                  originalStoragePath.isNotEmpty &&
+                  originalStoragePath != finalStoragePath;
+            } else {
+              final externalLinkReplacedStoredFile =
+                  originalStoragePath.isNotEmpty &&
+                  manualFileUrl != originalFileUrl;
+
+              if (removeExistingFile ||
+                  externalLinkReplacedStoredFile) {
+                finalStoragePath = '';
+                finalFileName = '';
+                finalFileSize = 0;
+                finalContentType = '';
+                shouldDeleteOldStorageFile =
+                    originalStoragePath.isNotEmpty;
+              }
+            }
+
             final data = <String, dynamic>{
               'title': title.text.trim(),
               'unit': unit.text.trim(),
               'description': description.text.trim(),
               'classId': selectedClassId,
-              'fileUrl': fileUrl.text.trim(),
+              'fileUrl': finalFileUrl,
+              'fileName': finalFileName,
+              'fileSize': finalFileSize,
+              'fileContentType': finalContentType,
+              'storagePath': finalStoragePath,
               'videoUrl': videoUrl.text.trim(),
               'published': published,
               'updatedAt': FieldValue.serverTimestamp(),
+              if (!isEditing)
+                'createdAt': FieldValue.serverTimestamp(),
             };
-            if (isEditing) {
-              await lessonDoc.reference.update(data);
-            } else {
-              data['createdAt'] = FieldValue.serverTimestamp();
-              await FirebaseFirestore.instance.collection('lessons').add(data);
+
+            await lessonReference.set(data, SetOptions(merge: true));
+
+            if (shouldDeleteOldStorageFile) {
+              try {
+                await deleteLessonStorageFile(originalStoragePath);
+              } catch (_) {
+                // The lesson itself is already saved. An old orphaned file
+                // should not make the whole lesson operation fail.
+              }
             }
-            if (dialogContext.mounted) Navigator.of(dialogContext).pop();
+
+            if (dialogContext.mounted) {
+              Navigator.of(dialogContext).pop();
+            }
             if (context.mounted) {
-              showSuccess(context, isEditing ? 'تم تعديل الدرس.' : 'تمت إضافة الدرس.');
+              showSuccess(
+                context,
+                isEditing
+                    ? 'تم تعديل الدرس.'
+                    : 'تمت إضافة الدرس.',
+              );
             }
           } catch (exception) {
+            if (newlyUploadedReference != null) {
+              try {
+                await newlyUploadedReference!.delete();
+              } catch (_) {
+                // Ignore cleanup errors; the original upload error is clearer.
+              }
+            }
+
             if (dialogContext.mounted) {
               setDialogState(() {
                 saving = false;
-                dialogError = 'تعذر حفظ الدرس: $exception';
+                dialogError =
+                    'تعذر حفظ الدرس: ${friendlyStorageError(exception)}';
               });
             }
           }
         }
 
+        final currentFileIsVisible =
+            !removeExistingFile &&
+            selectedFile == null &&
+            (originalFileUrl.trim().isNotEmpty ||
+                originalStoragePath.isNotEmpty);
+
         return AlertDialog(
           title: Text(isEditing ? 'تعديل الدرس' : 'إضافة درس'),
           content: SingleChildScrollView(
             child: SizedBox(
-              width: 470,
+              width: 500,
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -2056,26 +2469,160 @@ Future<void> showLessonDialog(
                       prefixIcon: Icon(Icons.groups_outlined),
                     ),
                     items: const [
-                      DropdownMenuItem(value: 'CLS-001', child: Text('مجموعة 27')),
-                      DropdownMenuItem(value: 'CLS-002', child: Text('مجموعة 28')),
-                      DropdownMenuItem(value: 'ALL', child: Text('كل المجموعات')),
+                      DropdownMenuItem(
+                        value: 'CLS-001',
+                        child: Text('مجموعة 27'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'CLS-002',
+                        child: Text('مجموعة 28'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'ALL',
+                        child: Text('كل المجموعات'),
+                      ),
                     ],
                     onChanged: saving
                         ? null
                         : (value) {
                             if (value != null) {
-                              setDialogState(() => selectedClassId = value);
+                              setDialogState(
+                                () => selectedClassId = value,
+                              );
                             }
                           },
+                  ),
+                  const SizedBox(height: 14),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF7F3FA),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                        color: const Color(0x223E276A),
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        const Text(
+                          'ملف الدرس',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w800,
+                            color: brandPurpleDark,
+                          ),
+                        ),
+                        const SizedBox(height: 5),
+                        const Text(
+                          'يمكن رفع PDF أو صورة أو ملف Word أو PowerPoint حتى 20 ميغابايت.',
+                          style: TextStyle(
+                            fontSize: 12.5,
+                            color: Colors.black54,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        OutlinedButton.icon(
+                          onPressed: saving ? null : chooseFile,
+                          icon: const Icon(
+                            Icons.upload_file_outlined,
+                          ),
+                          label: Text(
+                            selectedFile == null
+                                ? 'اختيار ملف من الهاتف'
+                                : 'اختيار ملف آخر',
+                          ),
+                        ),
+                        if (selectedFile != null) ...[
+                          const SizedBox(height: 10),
+                          ListTile(
+                            contentPadding: EdgeInsets.zero,
+                            leading: const FeatureIcon(
+                              icon: Icons.description_outlined,
+                            ),
+                            title: Text(
+                              selectedFile!.name,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            subtitle: Text(
+                              displayFileSize(selectedFile!.size),
+                            ),
+                            trailing: IconButton(
+                              tooltip: 'إلغاء الملف المختار',
+                              onPressed:
+                                  saving ? null : cancelSelectedFile,
+                              icon: const Icon(
+                                Icons.close_rounded,
+                                color: Color(0xFFC62828),
+                              ),
+                            ),
+                          ),
+                        ] else if (currentFileIsVisible) ...[
+                          const SizedBox(height: 10),
+                          ListTile(
+                            contentPadding: EdgeInsets.zero,
+                            leading: const FeatureIcon(
+                              icon: Icons.attach_file_rounded,
+                            ),
+                            title: Text(
+                              originalFileName.isEmpty
+                                  ? 'ملف الدرس الحالي'
+                                  : originalFileName,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            subtitle: Text(
+                              originalFileSize > 0
+                                  ? displayFileSize(originalFileSize)
+                                  : 'رابط ملف محفوظ',
+                            ),
+                            trailing: IconButton(
+                              tooltip: 'إزالة الملف',
+                              onPressed:
+                                  saving ? null : removeCurrentFile,
+                              icon: const Icon(
+                                Icons.delete_outline,
+                                color: Color(0xFFC62828),
+                              ),
+                            ),
+                          ),
+                        ],
+                        if (saving &&
+                            selectedFile != null) ...[
+                          const SizedBox(height: 8),
+                          LinearProgressIndicator(
+                            value: uploadProgress > 0
+                                ? uploadProgress
+                                : null,
+                          ),
+                          const SizedBox(height: 5),
+                          Text(
+                            uploadProgress > 0
+                                ? 'جارٍ رفع الملف… ${(uploadProgress * 100).round()}%'
+                                : 'جارٍ بدء رفع الملف…',
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              color: brandPurple,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
                   ),
                   const SizedBox(height: 12),
                   TextField(
                     controller: fileUrl,
-                    enabled: !saving,
+                    enabled: !saving && selectedFile == null,
                     textDirection: TextDirection.ltr,
-                    decoration: const InputDecoration(
-                      labelText: 'رابط الملف – اختياري',
-                      prefixIcon: Icon(Icons.attach_file),
+                    decoration: InputDecoration(
+                      labelText: 'أو رابط ملف خارجي – اختياري',
+                      prefixIcon:
+                          const Icon(Icons.link_outlined),
+                      helperText: selectedFile != null
+                          ? 'سيُستخدم الملف المختار بدل الرابط الخارجي.'
+                          : null,
                     ),
                   ),
                   const SizedBox(height: 12),
@@ -2085,32 +2632,64 @@ Future<void> showLessonDialog(
                     textDirection: TextDirection.ltr,
                     decoration: const InputDecoration(
                       labelText: 'رابط الفيديو – اختياري',
-                      prefixIcon: Icon(Icons.play_circle_outline),
+                      prefixIcon:
+                          Icon(Icons.play_circle_outline),
                     ),
                   ),
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,
                     title: const Text('منشور للطالبات'),
+                    subtitle: const Text(
+                      'لن يظهر في حسابات الطالبات إذا كان الخيار متوقفًا.',
+                    ),
                     value: published,
                     onChanged: saving
                         ? null
-                        : (value) => setDialogState(() => published = value),
+                        : (value) => setDialogState(
+                              () => published = value,
+                            ),
                   ),
-                  if (dialogError != null)
-                    Text(dialogError!, style: const TextStyle(color: Colors.red)),
+                  if (dialogError != null) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      dialogError!,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: Color(0xFFC62828),
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),
           ),
           actions: [
             TextButton(
-              onPressed: saving ? null : () => Navigator.of(dialogContext).pop(),
+              onPressed: saving
+                  ? null
+                  : () => Navigator.of(dialogContext).pop(),
               child: const Text('إلغاء'),
             ),
             FilledButton.icon(
               onPressed: saving ? null : save,
-              icon: const Icon(Icons.save_outlined),
-              label: Text(saving ? 'جارٍ الحفظ...' : 'حفظ'),
+              icon: saving
+                  ? const SizedBox(
+                      width: 17,
+                      height: 17,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : const Icon(Icons.save_outlined),
+              label: Text(
+                saving
+                    ? selectedFile != null
+                        ? 'جارٍ الرفع والحفظ…'
+                        : 'جارٍ الحفظ…'
+                    : 'حفظ',
+              ),
             ),
           ],
         );

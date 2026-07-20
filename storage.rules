@@ -1,0 +1,54 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    function signedIn() {
+      return request.auth != null
+        && request.auth.token.email != null;
+    }
+
+    function userPath() {
+      return /databases/(default)/documents/users/$(request.auth.token.email);
+    }
+
+    function activeUser() {
+      return signedIn()
+        && firestore.exists(userPath())
+        && firestore.get(userPath()).data.active == true;
+    }
+
+    function teacher() {
+      return activeUser()
+        && (
+          firestore.get(userPath()).data.role == 'Teacher'
+          || firestore.get(userPath()).data.role == 'Admin'
+        );
+    }
+
+    function supportedLessonFile() {
+      return request.resource != null
+        && request.resource.size <= 20 * 1024 * 1024
+        && request.resource.contentType != null
+        && (
+          request.resource.contentType == 'application/pdf'
+          || request.resource.contentType.matches('image/.*')
+          || request.resource.contentType == 'application/msword'
+          || request.resource.contentType ==
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+          || request.resource.contentType == 'application/vnd.ms-powerpoint'
+          || request.resource.contentType ==
+            'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+        );
+    }
+
+    match /lesson_files/{lessonId}/{fileName} {
+      allow read: if activeUser();
+      allow create, update: if teacher() && supportedLessonFile();
+      allow delete: if teacher();
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
