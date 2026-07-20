@@ -1,8 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
-import 'package:firebase_storage/firebase_storage.dart';
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -42,6 +40,146 @@ String displayClassName(String? classId) {
 
 String arabicAttendanceStatus(String? status) =>
     status == 'Present' ? 'حاضرة' : 'غائبة';
+
+String normalizeLessonLink(String rawValue) {
+  final value = rawValue.trim();
+  if (value.isEmpty) return '';
+  if (value.startsWith('http://') || value.startsWith('https://')) {
+    return value;
+  }
+  return 'https://$value';
+}
+
+bool isValidLessonLink(String rawValue) {
+  final value = normalizeLessonLink(rawValue);
+  if (value.isEmpty) return true;
+  final uri = Uri.tryParse(value);
+  return uri != null &&
+      (uri.scheme == 'http' || uri.scheme == 'https') &&
+      uri.host.trim().isNotEmpty;
+}
+
+bool isVideoLink(String rawUrl) {
+  final value = rawUrl.toLowerCase();
+  return value.contains('youtube.com') ||
+      value.contains('youtu.be') ||
+      value.contains('vimeo.com') ||
+      value.contains('drive.google.com') && value.contains('/video');
+}
+
+bool isGoogleDriveLink(String rawUrl) =>
+    rawUrl.toLowerCase().contains('drive.google.com');
+
+bool isPdfLink(String rawUrl) {
+  final value = rawUrl.toLowerCase().split('?').first;
+  return value.endsWith('.pdf') || value.contains('/pdf/');
+}
+
+bool isImageLink(String rawUrl) {
+  final value = rawUrl.toLowerCase().split('?').first;
+  return value.endsWith('.jpg') ||
+      value.endsWith('.jpeg') ||
+      value.endsWith('.png') ||
+      value.endsWith('.webp');
+}
+
+IconData lessonLinkIcon(String rawUrl, {bool videoField = false}) {
+  if (videoField || isVideoLink(rawUrl)) {
+    return Icons.play_circle_outline_rounded;
+  }
+  if (isPdfLink(rawUrl)) return Icons.picture_as_pdf_outlined;
+  if (isImageLink(rawUrl)) return Icons.image_outlined;
+  if (isGoogleDriveLink(rawUrl)) return Icons.cloud_outlined;
+  return Icons.link_rounded;
+}
+
+String lessonLinkLabel(String rawUrl, {bool videoField = false}) {
+  if (videoField || isVideoLink(rawUrl)) return 'مشاهدة الفيديو';
+  if (isPdfLink(rawUrl)) return 'فتح ملف PDF';
+  if (isImageLink(rawUrl)) return 'فتح الصورة';
+  if (isGoogleDriveLink(rawUrl)) return 'فتح Google Drive';
+  return 'فتح الرابط';
+}
+
+Future<void> openLessonContent(
+  BuildContext context, {
+  required String fileUrl,
+  required String videoUrl,
+}) async {
+  final file = fileUrl.trim();
+  final video = videoUrl.trim();
+
+  if (file.isEmpty && video.isEmpty) {
+    showErrorSnack(context, 'لم تتم إضافة رابط أو فيديو لهذا الدرس بعد.');
+    return;
+  }
+
+  if (file.isNotEmpty && video.isEmpty) {
+    await openExternalLink(context, file);
+    return;
+  }
+
+  if (video.isNotEmpty && file.isEmpty) {
+    await openExternalLink(context, video);
+    return;
+  }
+
+  await showModalBottomSheet<void>(
+    context: context,
+    showDragHandle: true,
+    builder: (sheetContext) => SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text(
+              'محتوى الدرس',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w900,
+                color: brandPurpleDark,
+              ),
+            ),
+            const SizedBox(height: 12),
+            ListTile(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+              tileColor: const Color(0xFFF7F3FA),
+              leading: FeatureIcon(icon: lessonLinkIcon(file)),
+              title: Text(lessonLinkLabel(file)),
+              trailing: const Icon(Icons.open_in_new_rounded),
+              onTap: () {
+                Navigator.of(sheetContext).pop();
+                openExternalLink(context, file);
+              },
+            ),
+            const SizedBox(height: 8),
+            ListTile(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+              tileColor: const Color(0xFFF7F3FA),
+              leading: FeatureIcon(
+                icon: lessonLinkIcon(video, videoField: true),
+              ),
+              title: const Text('مشاهدة الفيديو'),
+              trailing: const Icon(Icons.open_in_new_rounded),
+              onTap: () {
+                Navigator.of(sheetContext).pop();
+                openExternalLink(context, video);
+              },
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
 
 String notificationTypeLabel(String? type) {
   switch (type) {
@@ -119,78 +257,6 @@ String displayNumber(dynamic value) {
 }
 
 String todayIso() => DateTime.now().toIso8601String().split('T').first;
-
-const int maximumLessonFileBytes = 20 * 1024 * 1024;
-
-String lessonFileContentType(PlatformFile file) {
-  switch ((file.extension ?? '').toLowerCase()) {
-    case 'pdf':
-      return 'application/pdf';
-    case 'jpg':
-    case 'jpeg':
-      return 'image/jpeg';
-    case 'png':
-      return 'image/png';
-    case 'webp':
-      return 'image/webp';
-    case 'doc':
-      return 'application/msword';
-    case 'docx':
-      return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
-    case 'ppt':
-      return 'application/vnd.ms-powerpoint';
-    case 'pptx':
-      return 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
-    default:
-      return 'application/octet-stream';
-  }
-}
-
-String lessonStorageFileName(PlatformFile file) {
-  final extension = (file.extension ?? 'bin').toLowerCase();
-  return '${DateTime.now().microsecondsSinceEpoch}.$extension';
-}
-
-String displayFileSize(int bytes) {
-  if (bytes < 1024) return '$bytes بايت';
-  final kilobytes = bytes / 1024;
-  if (kilobytes < 1024) return '${kilobytes.toStringAsFixed(1)} كيلوبايت';
-  final megabytes = kilobytes / 1024;
-  return '${megabytes.toStringAsFixed(1)} ميغابايت';
-}
-
-String friendlyStorageError(Object exception) {
-  if (exception is FirebaseException) {
-    switch (exception.code) {
-      case 'unauthorized':
-        return 'لا توجد صلاحية لرفع الملف. تأكد من نشر قواعد Firebase Storage.';
-      case 'bucket-not-found':
-      case 'no-default-bucket':
-        return 'لم يتم تفعيل Firebase Storage لهذا المشروع بعد.';
-      case 'canceled':
-        return 'تم إلغاء رفع الملف.';
-      case 'quota-exceeded':
-        return 'تم تجاوز سعة التخزين المتاحة في Firebase.';
-      case 'retry-limit-exceeded':
-        return 'انقطع الاتصال أثناء الرفع. أعد المحاولة.';
-      default:
-        return exception.message ?? exception.code;
-    }
-  }
-  return exception.toString();
-}
-
-Future<void> deleteLessonStorageFile(String? storagePath) async {
-  final path = (storagePath ?? '').trim();
-  if (path.isEmpty) return;
-
-  try {
-    await FirebaseStorage.instance.ref(path).delete();
-  } on FirebaseException catch (exception) {
-    if (exception.code != 'object-not-found') rethrow;
-  }
-}
-
 
 Future<void> openTeacherWhatsApp(BuildContext context) async {
   final uri = Uri.https(
@@ -1918,38 +1984,41 @@ class LessonsPage extends StatelessWidget {
               final data = doc.data();
               final description =
                   (data['description'] ?? '').toString().trim();
-              final attachedFileUrl =
+              final fileUrl =
                   (data['fileUrl'] ?? '').toString().trim();
-              final attachedFileName =
-                  (data['fileName'] ?? '').toString().trim();
-              final videoUrl = (data['videoUrl'] ?? '').toString().trim();
+              final videoUrl =
+                  (data['videoUrl'] ?? '').toString().trim();
+              final hasContent =
+                  fileUrl.isNotEmpty || videoUrl.isNotEmpty;
 
               return Card(
                 clipBehavior: Clip.antiAlias,
                 child: InkWell(
-                  onTap: () {
-                    if (attachedFileUrl.isNotEmpty && videoUrl.isEmpty) {
-                      openExternalLink(context, attachedFileUrl);
-                    } else if (videoUrl.isNotEmpty &&
-                        attachedFileUrl.isEmpty) {
-                      openExternalLink(context, videoUrl);
-                    } else if (attachedFileUrl.isEmpty && videoUrl.isEmpty) {
-                      showErrorSnack(
-                        context,
-                        'لم تتم إضافة ملف أو فيديو لهذا الدرس بعد.',
-                      );
-                    }
-                  },
+                  onTap: () => openLessonContent(
+                    context,
+                    fileUrl: fileUrl,
+                    videoUrl: videoUrl,
+                  ),
                   child: Padding(
                     padding: const EdgeInsets.all(16),
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const FeatureIcon(icon: Icons.menu_book_outlined),
+                        FeatureIcon(
+                          icon: hasContent
+                              ? lessonLinkIcon(
+                                  videoUrl.isNotEmpty
+                                      ? videoUrl
+                                      : fileUrl,
+                                  videoField: videoUrl.isNotEmpty,
+                                )
+                              : Icons.menu_book_outlined,
+                        ),
                         const SizedBox(width: 12),
                         Expanded(
                           child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
+                            crossAxisAlignment:
+                                CrossAxisAlignment.start,
                             children: [
                               Text(
                                 (data['title'] ?? 'درس').toString(),
@@ -1961,8 +2030,9 @@ class LessonsPage extends StatelessWidget {
                               const SizedBox(height: 5),
                               Text(
                                 'الوحدة: ${(data['unit'] ?? 'غير محددة')}',
-                                style:
-                                    const TextStyle(color: Colors.black54),
+                                style: const TextStyle(
+                                  color: Colors.black54,
+                                ),
                               ),
                               if (description.isNotEmpty) ...[
                                 const SizedBox(height: 8),
@@ -1979,17 +2049,25 @@ class LessonsPage extends StatelessWidget {
                                     ),
                                     icon: Icons.groups_outlined,
                                   ),
-                                  if (attachedFileUrl.isNotEmpty)
+                                  if (fileUrl.isNotEmpty)
                                     SmallChip(
-                                      text: attachedFileName.isEmpty
-                                          ? 'ملف مرفق'
-                                          : attachedFileName,
-                                      icon: Icons.attach_file,
+                                      text: isGoogleDriveLink(fileUrl)
+                                          ? 'Google Drive'
+                                          : isPdfLink(fileUrl)
+                                              ? 'PDF'
+                                              : 'رابط مرفق',
+                                      icon: lessonLinkIcon(fileUrl),
                                     ),
                                   if (videoUrl.isNotEmpty)
                                     const SmallChip(
                                       text: 'فيديو',
-                                      icon: Icons.play_circle_outline,
+                                      icon:
+                                          Icons.play_circle_outline,
+                                    ),
+                                  if (!hasContent)
+                                    const SmallChip(
+                                      text: 'دون رابط',
+                                      icon: Icons.link_off_outlined,
                                     ),
                                   if (isTeacher)
                                     SmallChip(
@@ -1997,48 +2075,60 @@ class LessonsPage extends StatelessWidget {
                                           ? 'غير منشور'
                                           : 'منشور',
                                       icon: data['published'] == false
-                                          ? Icons.visibility_off_outlined
+                                          ? Icons
+                                              .visibility_off_outlined
                                           : Icons.visibility_outlined,
                                     ),
                                 ],
                               ),
-                              if (attachedFileUrl.isNotEmpty ||
-                                  videoUrl.isNotEmpty) ...[
+                              if (hasContent) ...[
                                 const SizedBox(height: 10),
                                 Wrap(
                                   spacing: 8,
                                   runSpacing: 8,
                                   children: [
-                                    if (attachedFileUrl.isNotEmpty)
+                                    if (fileUrl.isNotEmpty)
                                       OutlinedButton.icon(
-                                        onPressed: () => openExternalLink(
+                                        onPressed: () =>
+                                            openExternalLink(
                                           context,
-                                          attachedFileUrl,
+                                          fileUrl,
                                         ),
-                                        icon: const Icon(
-                                          Icons.attach_file_rounded,
+                                        icon: Icon(
+                                          lessonLinkIcon(fileUrl),
                                           size: 18,
                                         ),
                                         label: Text(
-                                          attachedFileName.isEmpty
-                                              ? 'فتح الملف'
-                                              : 'فتح $attachedFileName',
-                                          overflow: TextOverflow.ellipsis,
+                                          lessonLinkLabel(fileUrl),
                                         ),
                                       ),
                                     if (videoUrl.isNotEmpty)
                                       OutlinedButton.icon(
-                                        onPressed: () => openExternalLink(
+                                        onPressed: () =>
+                                            openExternalLink(
                                           context,
                                           videoUrl,
                                         ),
                                         icon: const Icon(
-                                          Icons.play_circle_outline_rounded,
+                                          Icons
+                                              .play_circle_outline_rounded,
                                           size: 18,
                                         ),
-                                        label: const Text('مشاهدة الفيديو'),
+                                        label:
+                                            const Text('مشاهدة الفيديو'),
                                       ),
                                   ],
+                                ),
+                              ] else ...[
+                                const SizedBox(height: 8),
+                                Text(
+                                  isTeacher
+                                      ? 'أضف رابطًا ليتمكن الطلاب من فتح محتوى الدرس.'
+                                      : 'لم يُرفق محتوى بهذا الدرس بعد.',
+                                  style: const TextStyle(
+                                    color: Colors.black54,
+                                    fontSize: 12.5,
+                                  ),
                                 ),
                               ],
                             ],
@@ -2053,7 +2143,24 @@ class LessonsPage extends StatelessWidget {
                                   lessonDoc: doc,
                                 );
                               } else if (value == 'delete') {
-                                await deleteLesson(context, doc);
+                                final confirmed =
+                                    await confirmAction(
+                                  context,
+                                  title: 'حذف الدرس',
+                                  message:
+                                      'سيتم حذف الدرس نهائيًا. هل تريد المتابعة؟',
+                                  confirmText: 'حذف',
+                                  destructive: true,
+                                );
+                                if (confirmed) {
+                                  await doc.reference.delete();
+                                  if (context.mounted) {
+                                    showSuccess(
+                                      context,
+                                      'تم حذف الدرس.',
+                                    );
+                                  }
+                                }
                               }
                             },
                             itemBuilder: (_) => const [
@@ -2094,93 +2201,31 @@ class LessonsPage extends StatelessWidget {
   }
 }
 
-Future<void> deleteLesson(
-  BuildContext context,
-  DocumentSnapshot<Map<String, dynamic>> lessonDoc,
-) async {
-  final data = lessonDoc.data() ?? <String, dynamic>{};
-  final title = (data['title'] ?? 'درس').toString();
-
-  final confirmed = await showDialog<bool>(
-    context: context,
-    builder: (dialogContext) => AlertDialog(
-      title: const Text('حذف الدرس'),
-      content: Text(
-        'هل تريد حذف درس «$title»؟\n'
-        'سيُحذف الملف المرفوع معه من Firebase Storage أيضًا.',
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(dialogContext).pop(false),
-          child: const Text('إلغاء'),
-        ),
-        FilledButton.icon(
-          style: FilledButton.styleFrom(
-            backgroundColor: const Color(0xFFC62828),
-          ),
-          onPressed: () => Navigator.of(dialogContext).pop(true),
-          icon: const Icon(Icons.delete_outline),
-          label: const Text('حذف'),
-        ),
-      ],
-    ),
-  );
-
-  if (confirmed != true) return;
-
-  try {
-    await deleteLessonStorageFile(data['storagePath']?.toString());
-    await lessonDoc.reference.delete();
-
-    if (context.mounted) {
-      showSuccess(context, 'تم حذف الدرس والملف المرفق.');
-    }
-  } catch (exception) {
-    if (context.mounted) {
-      showErrorSnack(
-        context,
-        'تعذر حذف الدرس: ${friendlyStorageError(exception)}',
-      );
-    }
-  }
-}
-
 Future<void> showLessonDialog(
   BuildContext context, {
   DocumentSnapshot<Map<String, dynamic>>? lessonDoc,
 }) async {
   final isEditing = lessonDoc != null;
   final oldData = lessonDoc?.data() ?? <String, dynamic>{};
-  final lessonReference = lessonDoc?.reference ??
-      FirebaseFirestore.instance.collection('lessons').doc();
 
   final title =
       TextEditingController(text: (oldData['title'] ?? '').toString());
   final unit =
       TextEditingController(text: (oldData['unit'] ?? '').toString());
-  final description =
-      TextEditingController(text: (oldData['description'] ?? '').toString());
-  final originalFileUrl = (oldData['fileUrl'] ?? '').toString();
-  final fileUrl = TextEditingController(text: originalFileUrl);
-  final videoUrl =
-      TextEditingController(text: (oldData['videoUrl'] ?? '').toString());
-
-  final originalStoragePath =
-      (oldData['storagePath'] ?? '').toString().trim();
-  final originalFileName =
-      (oldData['fileName'] ?? '').toString().trim();
-  final originalFileSize =
-      (oldData['fileSize'] is num) ? (oldData['fileSize'] as num).toInt() : 0;
-  final originalContentType =
-      (oldData['fileContentType'] ?? '').toString().trim();
+  final description = TextEditingController(
+    text: (oldData['description'] ?? '').toString(),
+  );
+  final fileUrl = TextEditingController(
+    text: (oldData['fileUrl'] ?? '').toString(),
+  );
+  final videoUrl = TextEditingController(
+    text: (oldData['videoUrl'] ?? '').toString(),
+  );
 
   var selectedClassId =
       (oldData['classId'] ?? 'CLS-001').toString();
   var published = oldData['published'] != false;
   var saving = false;
-  var uploadProgress = 0.0;
-  var removeExistingFile = false;
-  PlatformFile? selectedFile;
   String? dialogError;
 
   await showDialog<void>(
@@ -2188,82 +2233,27 @@ Future<void> showLessonDialog(
     barrierDismissible: false,
     builder: (dialogContext) => StatefulBuilder(
       builder: (dialogContext, setDialogState) {
-        Future<void> chooseFile() async {
-          setDialogState(() => dialogError = null);
-
-          try {
-            final result = await FilePicker.platform.pickFiles(
-              allowMultiple: false,
-              type: FileType.custom,
-              allowedExtensions: const [
-                'pdf',
-                'jpg',
-                'jpeg',
-                'png',
-                'webp',
-                'doc',
-                'docx',
-                'ppt',
-                'pptx',
-              ],
-              withData: true,
-            );
-
-            if (result == null || result.files.isEmpty) return;
-
-            final picked = result.files.single;
-            if (picked.bytes == null) {
-              setDialogState(
-                () => dialogError =
-                    'تعذر قراءة الملف. اختر الملف من ذاكرة الهاتف ثم أعد المحاولة.',
-              );
-              return;
-            }
-            if (picked.size <= 0) {
-              setDialogState(
-                () => dialogError = 'الملف المختار فارغ.',
-              );
-              return;
-            }
-            if (picked.size > maximumLessonFileBytes) {
-              setDialogState(
-                () => dialogError =
-                    'حجم الملف أكبر من 20 ميغابايت. اختر ملفًا أصغر.',
-              );
-              return;
-            }
-
-            setDialogState(() {
-              selectedFile = picked;
-              removeExistingFile = false;
-              uploadProgress = 0;
-              fileUrl.clear();
-            });
-          } catch (exception) {
+        Future<void> previewLink(
+          TextEditingController controller,
+        ) async {
+          final value = controller.text.trim();
+          if (value.isEmpty) {
             setDialogState(
-              () => dialogError =
-                  'تعذر اختيار الملف: ${friendlyStorageError(exception)}',
+              () => dialogError = 'أدخل الرابط أولًا.',
             );
+            return;
           }
-        }
-
-        void cancelSelectedFile() {
-          setDialogState(() {
-            selectedFile = null;
-            uploadProgress = 0;
-            if (!removeExistingFile) {
-              fileUrl.text = originalFileUrl;
-            }
-          });
-        }
-
-        void removeCurrentFile() {
-          setDialogState(() {
-            selectedFile = null;
-            removeExistingFile = true;
-            uploadProgress = 0;
-            fileUrl.clear();
-          });
+          if (!isValidLessonLink(value)) {
+            setDialogState(
+              () => dialogError = 'الرابط غير صالح.',
+            );
+            return;
+          }
+          setDialogState(() => dialogError = null);
+          await openExternalLink(
+            dialogContext,
+            normalizeLessonLink(value),
+          );
         }
 
         Future<void> save() async {
@@ -2274,119 +2264,52 @@ Future<void> showLessonDialog(
             return;
           }
 
-          final manualFileUrl = fileUrl.text.trim();
-          if (manualFileUrl.isNotEmpty &&
-              !manualFileUrl.startsWith('http://') &&
-              !manualFileUrl.startsWith('https://')) {
+          if (!isValidLessonLink(fileUrl.text)) {
             setDialogState(
               () => dialogError =
-                  'رابط الملف الخارجي يجب أن يبدأ بـ https:// أو http://',
+                  'رابط الملف غير صالح. انسخه كاملًا من Google Drive.',
             );
             return;
           }
 
+          if (!isValidLessonLink(videoUrl.text)) {
+            setDialogState(
+              () => dialogError =
+                  'رابط الفيديو غير صالح. انسخه كاملًا من YouTube.',
+            );
+            return;
+          }
+
+          final normalizedFileUrl =
+              normalizeLessonLink(fileUrl.text);
+          final normalizedVideoUrl =
+              normalizeLessonLink(videoUrl.text);
+
           setDialogState(() {
             saving = true;
-            uploadProgress = 0;
             dialogError = null;
           });
 
-          Reference? newlyUploadedReference;
-          var finalFileUrl = manualFileUrl;
-          var finalStoragePath = originalStoragePath;
-          var finalFileName = originalFileName;
-          var finalFileSize = originalFileSize;
-          var finalContentType = originalContentType;
-          var shouldDeleteOldStorageFile = false;
-
           try {
-            if (selectedFile != null) {
-              final picked = selectedFile!;
-              final bytes = picked.bytes!;
-              final storagePath =
-                  'lesson_files/${lessonReference.id}/${lessonStorageFileName(picked)}';
-              final storageReference =
-                  FirebaseStorage.instance.ref(storagePath);
-              newlyUploadedReference = storageReference;
-
-              final uploadTask = storageReference.putData(
-                bytes,
-                SettableMetadata(
-                  contentType: lessonFileContentType(picked),
-                  cacheControl: 'public,max-age=3600',
-                  customMetadata: <String, String>{
-                    'originalName': picked.name,
-                    'lessonId': lessonReference.id,
-                    'uploadedBy':
-                        FirebaseAuth.instance.currentUser?.email ?? '',
-                  },
-                ),
-              );
-
-              final progressSubscription =
-                  uploadTask.snapshotEvents.listen((snapshot) {
-                final total = snapshot.totalBytes;
-                if (total <= 0 || !dialogContext.mounted) return;
-                setDialogState(
-                  () => uploadProgress =
-                      snapshot.bytesTransferred / total,
-                );
-              });
-
-              final uploadSnapshot = await uploadTask;
-              await progressSubscription.cancel();
-
-              finalFileUrl =
-                  await uploadSnapshot.ref.getDownloadURL();
-              finalStoragePath = uploadSnapshot.ref.fullPath;
-              finalFileName = picked.name;
-              finalFileSize = picked.size;
-              finalContentType = lessonFileContentType(picked);
-              shouldDeleteOldStorageFile =
-                  originalStoragePath.isNotEmpty &&
-                  originalStoragePath != finalStoragePath;
-            } else {
-              final externalLinkReplacedStoredFile =
-                  originalStoragePath.isNotEmpty &&
-                  manualFileUrl != originalFileUrl;
-
-              if (removeExistingFile ||
-                  externalLinkReplacedStoredFile) {
-                finalStoragePath = '';
-                finalFileName = '';
-                finalFileSize = 0;
-                finalContentType = '';
-                shouldDeleteOldStorageFile =
-                    originalStoragePath.isNotEmpty;
-              }
-            }
-
             final data = <String, dynamic>{
               'title': title.text.trim(),
               'unit': unit.text.trim(),
               'description': description.text.trim(),
               'classId': selectedClassId,
-              'fileUrl': finalFileUrl,
-              'fileName': finalFileName,
-              'fileSize': finalFileSize,
-              'fileContentType': finalContentType,
-              'storagePath': finalStoragePath,
-              'videoUrl': videoUrl.text.trim(),
+              'fileUrl': normalizedFileUrl,
+              'videoUrl': normalizedVideoUrl,
               'published': published,
               'updatedAt': FieldValue.serverTimestamp(),
-              if (!isEditing)
-                'createdAt': FieldValue.serverTimestamp(),
             };
 
-            await lessonReference.set(data, SetOptions(merge: true));
-
-            if (shouldDeleteOldStorageFile) {
-              try {
-                await deleteLessonStorageFile(originalStoragePath);
-              } catch (_) {
-                // The lesson itself is already saved. An old orphaned file
-                // should not make the whole lesson operation fail.
-              }
+            if (isEditing) {
+              await lessonDoc.reference.update(data);
+            } else {
+              data['createdAt'] =
+                  FieldValue.serverTimestamp();
+              await FirebaseFirestore.instance
+                  .collection('lessons')
+                  .add(data);
             }
 
             if (dialogContext.mounted) {
@@ -2401,32 +2324,20 @@ Future<void> showLessonDialog(
               );
             }
           } catch (exception) {
-            if (newlyUploadedReference != null) {
-              try {
-                await newlyUploadedReference!.delete();
-              } catch (_) {
-                // Ignore cleanup errors; the original upload error is clearer.
-              }
-            }
-
             if (dialogContext.mounted) {
               setDialogState(() {
                 saving = false;
                 dialogError =
-                    'تعذر حفظ الدرس: ${friendlyStorageError(exception)}';
+                    'تعذر حفظ الدرس: $exception';
               });
             }
           }
         }
 
-        final currentFileIsVisible =
-            !removeExistingFile &&
-            selectedFile == null &&
-            (originalFileUrl.trim().isNotEmpty ||
-                originalStoragePath.isNotEmpty);
-
         return AlertDialog(
-          title: Text(isEditing ? 'تعديل الدرس' : 'إضافة درس'),
+          title: Text(
+            isEditing ? 'تعديل الدرس' : 'إضافة درس',
+          ),
           content: SingleChildScrollView(
             child: SizedBox(
               width: 500,
@@ -2447,7 +2358,8 @@ Future<void> showLessonDialog(
                     enabled: !saving,
                     decoration: const InputDecoration(
                       labelText: 'الوحدة أو البحث',
-                      prefixIcon: Icon(Icons.folder_outlined),
+                      prefixIcon:
+                          Icon(Icons.folder_outlined),
                     ),
                   ),
                   const SizedBox(height: 12),
@@ -2458,7 +2370,8 @@ Future<void> showLessonDialog(
                     maxLines: 4,
                     decoration: const InputDecoration(
                       labelText: 'وصف مختصر',
-                      prefixIcon: Icon(Icons.notes_outlined),
+                      prefixIcon:
+                          Icon(Icons.notes_outlined),
                     ),
                   ),
                   const SizedBox(height: 12),
@@ -2466,7 +2379,8 @@ Future<void> showLessonDialog(
                     value: selectedClassId,
                     decoration: const InputDecoration(
                       labelText: 'المجموعة',
-                      prefixIcon: Icon(Icons.groups_outlined),
+                      prefixIcon:
+                          Icon(Icons.groups_outlined),
                     ),
                     items: const [
                       DropdownMenuItem(
@@ -2487,7 +2401,8 @@ Future<void> showLessonDialog(
                         : (value) {
                             if (value != null) {
                               setDialogState(
-                                () => selectedClassId = value,
+                                () =>
+                                    selectedClassId = value,
                               );
                             }
                           },
@@ -2503,126 +2418,60 @@ Future<void> showLessonDialog(
                         color: const Color(0x223E276A),
                       ),
                     ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                    child: const Column(
+                      crossAxisAlignment:
+                          CrossAxisAlignment.start,
                       children: [
-                        const Text(
-                          'ملف الدرس',
-                          style: TextStyle(
-                            fontWeight: FontWeight.w800,
-                            color: brandPurpleDark,
-                          ),
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.cloud_outlined,
+                              color: brandPurple,
+                            ),
+                            SizedBox(width: 8),
+                            Text(
+                              'إضافة الملف مجانًا عبر رابط',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w800,
+                                color: brandPurpleDark,
+                              ),
+                            ),
+                          ],
                         ),
-                        const SizedBox(height: 5),
-                        const Text(
-                          'يمكن رفع PDF أو صورة أو ملف Word أو PowerPoint حتى 20 ميغابايت.',
+                        SizedBox(height: 6),
+                        Text(
+                          'ارفع الملف إلى Google Drive، واجعل الوصول «أي شخص لديه الرابط»، ثم الصق الرابط أدناه.',
                           style: TextStyle(
                             fontSize: 12.5,
                             color: Colors.black54,
+                            height: 1.5,
                           ),
                         ),
-                        const SizedBox(height: 12),
-                        OutlinedButton.icon(
-                          onPressed: saving ? null : chooseFile,
-                          icon: const Icon(
-                            Icons.upload_file_outlined,
-                          ),
-                          label: Text(
-                            selectedFile == null
-                                ? 'اختيار ملف من الهاتف'
-                                : 'اختيار ملف آخر',
-                          ),
-                        ),
-                        if (selectedFile != null) ...[
-                          const SizedBox(height: 10),
-                          ListTile(
-                            contentPadding: EdgeInsets.zero,
-                            leading: const FeatureIcon(
-                              icon: Icons.description_outlined,
-                            ),
-                            title: Text(
-                              selectedFile!.name,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            subtitle: Text(
-                              displayFileSize(selectedFile!.size),
-                            ),
-                            trailing: IconButton(
-                              tooltip: 'إلغاء الملف المختار',
-                              onPressed:
-                                  saving ? null : cancelSelectedFile,
-                              icon: const Icon(
-                                Icons.close_rounded,
-                                color: Color(0xFFC62828),
-                              ),
-                            ),
-                          ),
-                        ] else if (currentFileIsVisible) ...[
-                          const SizedBox(height: 10),
-                          ListTile(
-                            contentPadding: EdgeInsets.zero,
-                            leading: const FeatureIcon(
-                              icon: Icons.attach_file_rounded,
-                            ),
-                            title: Text(
-                              originalFileName.isEmpty
-                                  ? 'ملف الدرس الحالي'
-                                  : originalFileName,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            subtitle: Text(
-                              originalFileSize > 0
-                                  ? displayFileSize(originalFileSize)
-                                  : 'رابط ملف محفوظ',
-                            ),
-                            trailing: IconButton(
-                              tooltip: 'إزالة الملف',
-                              onPressed:
-                                  saving ? null : removeCurrentFile,
-                              icon: const Icon(
-                                Icons.delete_outline,
-                                color: Color(0xFFC62828),
-                              ),
-                            ),
-                          ),
-                        ],
-                        if (saving &&
-                            selectedFile != null) ...[
-                          const SizedBox(height: 8),
-                          LinearProgressIndicator(
-                            value: uploadProgress > 0
-                                ? uploadProgress
-                                : null,
-                          ),
-                          const SizedBox(height: 5),
-                          Text(
-                            uploadProgress > 0
-                                ? 'جارٍ رفع الملف… ${(uploadProgress * 100).round()}%'
-                                : 'جارٍ بدء رفع الملف…',
-                            textAlign: TextAlign.center,
-                            style: const TextStyle(
-                              color: brandPurple,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ],
                       ],
                     ),
                   ),
                   const SizedBox(height: 12),
                   TextField(
                     controller: fileUrl,
-                    enabled: !saving && selectedFile == null,
+                    enabled: !saving,
                     textDirection: TextDirection.ltr,
+                    keyboardType: TextInputType.url,
                     decoration: InputDecoration(
-                      labelText: 'أو رابط ملف خارجي – اختياري',
+                      labelText:
+                          'رابط الملف أو الشرح – اختياري',
                       prefixIcon:
-                          const Icon(Icons.link_outlined),
-                      helperText: selectedFile != null
-                          ? 'سيُستخدم الملف المختار بدل الرابط الخارجي.'
-                          : null,
+                          const Icon(Icons.link_rounded),
+                      suffixIcon: IconButton(
+                        tooltip: 'تجربة الرابط',
+                        onPressed: saving
+                            ? null
+                            : () => previewLink(fileUrl),
+                        icon: const Icon(
+                          Icons.open_in_new_rounded,
+                        ),
+                      ),
+                      helperText:
+                          'مثال: رابط Google Drive أو ملف PDF.',
                     ),
                   ),
                   const SizedBox(height: 12),
@@ -2630,17 +2479,32 @@ Future<void> showLessonDialog(
                     controller: videoUrl,
                     enabled: !saving,
                     textDirection: TextDirection.ltr,
-                    decoration: const InputDecoration(
-                      labelText: 'رابط الفيديو – اختياري',
-                      prefixIcon:
-                          Icon(Icons.play_circle_outline),
+                    keyboardType: TextInputType.url,
+                    decoration: InputDecoration(
+                      labelText:
+                          'رابط الفيديو – اختياري',
+                      prefixIcon: const Icon(
+                        Icons.play_circle_outline,
+                      ),
+                      suffixIcon: IconButton(
+                        tooltip: 'تجربة الفيديو',
+                        onPressed: saving
+                            ? null
+                            : () => previewLink(videoUrl),
+                        icon: const Icon(
+                          Icons.open_in_new_rounded,
+                        ),
+                      ),
+                      helperText:
+                          'مثال: رابط YouTube أو Google Drive.',
                     ),
                   ),
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,
-                    title: const Text('منشور للطالبات'),
+                    title:
+                        const Text('منشور للطالبات'),
                     subtitle: const Text(
-                      'لن يظهر في حسابات الطالبات إذا كان الخيار متوقفًا.',
+                      'لن يظهر الدرس للطالبات إذا كان الخيار متوقفًا.',
                     ),
                     value: published,
                     onChanged: saving
@@ -2668,7 +2532,8 @@ Future<void> showLessonDialog(
             TextButton(
               onPressed: saving
                   ? null
-                  : () => Navigator.of(dialogContext).pop(),
+                  : () =>
+                      Navigator.of(dialogContext).pop(),
               child: const Text('إلغاء'),
             ),
             FilledButton.icon(
@@ -2684,11 +2549,7 @@ Future<void> showLessonDialog(
                     )
                   : const Icon(Icons.save_outlined),
               label: Text(
-                saving
-                    ? selectedFile != null
-                        ? 'جارٍ الرفع والحفظ…'
-                        : 'جارٍ الحفظ…'
-                    : 'حفظ',
+                saving ? 'جارٍ الحفظ…' : 'حفظ',
               ),
             ),
           ],
